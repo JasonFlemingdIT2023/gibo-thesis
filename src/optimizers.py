@@ -19,6 +19,7 @@ from src.model import ExactGPSEModel, DerivativeExactGPSEModel
 # ============================================================
 from src.line_search.utils import get_search_direction, eval_phi_0
 from src.line_search.prob_wolfe import find_alpha_star, compute_p_wolfe
+from src.line_search.det_ei import find_alpha_star_ei, check_det_wolfe
 # ============================================================
 # THESIS EXTENSION — END
 # ============================================================
@@ -756,7 +757,72 @@ class BayesianGradientAscent(AbstractOptimizer):
                     f"  Prob-Wolfe: max_samples ({self.max_samples_per_iteration}) "
                     f"reached without satisfying Wolfe. Using alpha={alpha_candidate:.4f}."
                 )
-            # --- END Variant A inner loop ---
+            # --END Variant A inner loop
+
+        elif self.inner_loop_mode == 'det_ei':
+            # - Variant B: Deterministic Wolfe + EI inner loop
+            # Same lazy-direction design as Variant A: p is fixed after the
+            # first GI sample to avoid the zero-gradient degeneracy at theta.
+            # eta = phi_0 serves as EI reference (current posterior mean at theta).
+            p_direction = None
+            phi_0 = None
+            phi_prime_0 = None
+            eta = None
+            delta_val = float(self.delta) if self.delta is not None else 0.1
+            alpha_candidate = delta_val
+            _wolfe_satisfied = False
+
+            for i in range(self.max_samples_per_iteration):
+                # 1 Real function evaluation via GI acquisition function.
+                new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
+                new_y = self.objective(new_x)
+
+                # Update GP with new observation.
+                self.model.append_train_data(new_x, new_y)
+                self.model.posterior(self.params)
+                self.acquisition_fcn.update_K_xX_dx()
+
+                # 2 Fix search direction from first GI-informed posterior.
+                if p_direction is None:
+                    p_direction, _ = get_search_direction(self.model, self.params)
+                    phi_0, phi_prime_0, _ = eval_phi_0(
+                        self.model, self.params, p_direction
+                    )
+                    eta = phi_0  # EI reference: current posterior mean at theta
+
+                # 3 Recompute alpha_candidate via EI maximization.
+                alpha_candidate = find_alpha_star_ei(
+                    self.model, self.params, p_direction, eta=eta, delta=delta_val
+                )
+
+                # 4 Check strong Wolfe conditions deterministically on mu_post.
+                armijo_ok, curvature_ok = check_det_wolfe(
+                    self.model, self.params, alpha_candidate, p_direction,
+                    phi_0=phi_0, phi_prime_0=phi_prime_0,
+                    c1=self.c1, c2=self.c2,
+                )
+
+                if self.verbose:
+                    print(
+                        f"  Det-EI iter {i+1}: alpha={alpha_candidate:.4f}, "
+                        f"Armijo={'OK' if armijo_ok else 'NO'}, "
+                        f"Curvature={'OK' if curvature_ok else 'NO'}"
+                    )
+
+                if armijo_ok and curvature_ok:
+                    _wolfe_satisfied = True
+                    if self.verbose:
+                        print(
+                            f"  Det Wolfe satisfied after {i+1} inner samples."
+                        )
+                    break
+
+            if self.verbose and not _wolfe_satisfied:
+                print(
+                    f"  Det-EI: max_samples ({self.max_samples_per_iteration}) "
+                    f"reached without satisfying Wolfe. Using alpha={alpha_candidate:.4f}."
+                )
+            # --- END Variant B inner loop ---
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
@@ -787,17 +853,16 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.iteration += 1
             # --- END ORIGINAL GIBO CODE ---
 
-        elif self.inner_loop_mode == 'prob_wolfe':
-            # --- Variant A: Direct parameter update along p_direction ---
+        elif self.inner_loop_mode in ('prob_wolfe', 'det_ei'):
+            # --- Variant A & B: Direct parameter update along p_direction ---
             # Bypasses SGD entirely: theta_{t+1} = theta_t + alpha* * p
-            # p_direction is None only if max_samples_per_iteration == 0,
-            # which is a degenerate configuration; guard against it.
+            # p_direction is None only if max_samples_per_iteration == 0.
             with torch.no_grad():
                 self.optimizer_torch.zero_grad()
                 if p_direction is not None:
                     self.params.data += alpha_candidate * p_direction
                 self.iteration += 1
-            # --- END Variant A gradient step ---
+            # --- END Variant A & B gradient step ---
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
