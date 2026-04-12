@@ -705,7 +705,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             _wolfe_satisfied = False
 
             for i in range(self.max_samples_per_iteration):
-                # ① Real function evaluation via GI acquisition function.
+                # 1 Real function evaluation via GI acquisition function.
                 new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
                 new_y = self.objective(new_x)
                 _inner_samples += 1
@@ -715,13 +715,13 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.model.posterior(self.params)
                 self.acquisition_fcn.update_K_xX_dx()
 
-                # ② Recompute alpha_candidate from updated GP posterior.
+                # 2 Recompute alpha_candidate from updated GP posterior.
                 delta_val = float(self.delta) if self.delta is not None else 0.1
                 alpha_candidate = find_alpha_star(
                     self.model, self.params, p_direction, delta=delta_val
                 )
 
-                # ③ Check probabilistic Wolfe condition at alpha_candidate.
+                # 3 Check probabilistic Wolfe condition at alpha_candidate.
                 p_wolfe_val = compute_p_wolfe(
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
