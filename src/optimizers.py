@@ -694,34 +694,43 @@ class BayesianGradientAscent(AbstractOptimizer):
 
         elif self.inner_loop_mode == 'prob_wolfe':
             # --- Variant A: Probabilistic Wolfe inner loop ---
-            # Compute fixed search direction and baseline values once,
-            # before any GI samples are collected this iteration.
-            p_direction, _ = get_search_direction(self.model, self.params)
-            phi_0, phi_prime_0, _ = eval_phi_0(self.model, self.params, p_direction)
-
-            # Fallback step size: use delta (upper bound of local search region)
-            alpha_candidate = float(self.delta) if self.delta is not None else 0.1
-            _inner_samples = 0
+            # Design: p is fixed after the FIRST GI sample, not before.
+            # Reason: before any GI samples, the SE kernel derivative at
+            # theta (the only training point) is exactly zero, making
+            # the gradient direction degenerate. After one GI sample the
+            # posterior gradient at theta is non-trivial.
+            p_direction = None        # fixed after first GI sample
+            phi_0 = None
+            phi_prime_0 = None
+            delta_val = float(self.delta) if self.delta is not None else 0.1
+            alpha_candidate = delta_val   # fallback: upper bound of search
             _wolfe_satisfied = False
 
             for i in range(self.max_samples_per_iteration):
-                # 1 Real function evaluation via GI acquisition function.
+                # 1. Real function evaluation via GI acquisition function.
                 new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
                 new_y = self.objective(new_x)
-                _inner_samples += 1
 
                 # Update GP with new observation.
                 self.model.append_train_data(new_x, new_y)
                 self.model.posterior(self.params)
                 self.acquisition_fcn.update_K_xX_dx()
 
-                # 2 Recompute alpha_candidate from updated GP posterior.
-                delta_val = float(self.delta) if self.delta is not None else 0.1
+                # 2. Fix search direction from first GI-informed posterior.
+                # phi_0 and phi_prime_0 are computed here so that direction
+                # and baseline are consistent with the same GP state.
+                if p_direction is None:
+                    p_direction, _ = get_search_direction(self.model, self.params)
+                    phi_0, phi_prime_0, _ = eval_phi_0(
+                        self.model, self.params, p_direction
+                    )
+
+                # 3. Recompute alpha_candidate from updated GP posterior.
                 alpha_candidate = find_alpha_star(
                     self.model, self.params, p_direction, delta=delta_val
                 )
 
-                # 3 Check probabilistic Wolfe condition at alpha_candidate.
+                # 4. Check probabilistic Wolfe condition at alpha_candidate.
                 p_wolfe_val = compute_p_wolfe(
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
@@ -738,7 +747,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                     _wolfe_satisfied = True
                     if self.verbose:
                         print(
-                            f"  Wolfe satisfied after {_inner_samples} inner samples."
+                            f"  Wolfe satisfied after {i+1} inner samples."
                         )
                     break
 
@@ -781,11 +790,12 @@ class BayesianGradientAscent(AbstractOptimizer):
         elif self.inner_loop_mode == 'prob_wolfe':
             # --- Variant A: Direct parameter update along p_direction ---
             # Bypasses SGD entirely: theta_{t+1} = theta_t + alpha* * p
-            # p_direction is already normalized; alpha_candidate is the
-            # argmax mu_post step size from the probabilistic Wolfe check.
+            # p_direction is None only if max_samples_per_iteration == 0,
+            # which is a degenerate configuration; guard against it.
             with torch.no_grad():
                 self.optimizer_torch.zero_grad()
-                self.params.data += alpha_candidate * p_direction
+                if p_direction is not None:
+                    self.params.data += alpha_candidate * p_direction
                 self.iteration += 1
             # --- END Variant A gradient step ---
         # ============================================================
