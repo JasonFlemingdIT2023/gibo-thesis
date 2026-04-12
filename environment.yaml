@@ -1,4 +1,4 @@
-name: gibo
+name: gibo-thesis
 channels:
   - defaults
 dependencies:

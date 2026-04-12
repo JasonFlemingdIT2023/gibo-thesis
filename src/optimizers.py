@@ -13,6 +13,16 @@ from src.environment_api import EnvironmentObjective
 from src.acquisition_function import GradientInformation
 from src.model import ExactGPSEModel, DerivativeExactGPSEModel
 
+# ============================================================
+# THESIS EXTENSION — BEGIN
+# Description: Imports for adaptive inner loop termination variants
+# ============================================================
+from src.line_search.utils import get_search_direction, eval_phi_0
+from src.line_search.prob_wolfe import find_alpha_star, compute_p_wolfe
+# ============================================================
+# THESIS EXTENSION — END
+# ============================================================
+
 
 class AbstractOptimizer(ABC):
     """Abstract optimizer class.
@@ -525,6 +535,17 @@ class BayesianGradientAscent(AbstractOptimizer):
         normalize_gradient: bool = False,
         standard_deviation_scaling: bool = False,
         verbose: bool = True,
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Parameters for adaptive inner loop termination
+        # ============================================================
+        inner_loop_mode: str = 'original',
+        c1: float = 0.05,
+        c2: float = 0.5,
+        c_W: float = 0.3,
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
     ) -> None:
         """Inits optimizer Bayesian gradient ascent."""
         super(BayesianGradientAscent, self).__init__(params_init, objective)
@@ -585,6 +606,17 @@ class BayesianGradientAscent(AbstractOptimizer):
 
         self.max_samples_per_iteration = max_samples_per_iteration
         self.verbose = verbose
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Store adaptive termination mode and hyperparameters
+        # ============================================================
+        self.inner_loop_mode = inner_loop_mode
+        self.c1 = c1
+        self.c2 = c2
+        self.c_W = c_W
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
 
     def step(self) -> None:
         # Sample with new params from objective and add this to train data.
@@ -621,56 +653,144 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.params
             )  # Call this to update prediction strategy of GPyTorch.
 
-        acq_value_old = None
-        for i in range(self.max_samples_per_iteration):
-            # Optimize acquistion function and get new observation.
-            new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
-            new_y = self.objective(new_x)
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Branch on inner_loop_mode for adaptive termination
+        # ============================================================
+        if self.inner_loop_mode == 'original':
+            # --- ORIGINAL GIBO CODE (unchanged) ---
+            acq_value_old = None
+            for i in range(self.max_samples_per_iteration):
+                # Optimize acquistion function and get new observation.
+                new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
+                new_y = self.objective(new_x)
 
-            # Update training points.
-            self.model.append_train_data(new_x, new_y)
+                # Update training points.
+                self.model.append_train_data(new_x, new_y)
 
-            if (
-                type(self.objective._func) is EnvironmentObjective
-                and self.objective._func._manipulate_state is not None
-                and self.objective._func._manipulate_state.apply_update() is not None
-            ):
-                self.objective._func._manipulate_state.apply_update()
+                if (
+                    type(self.objective._func) is EnvironmentObjective
+                    and self.objective._func._manipulate_state is not None
+                    and self.objective._func._manipulate_state.apply_update() is not None
+                ):
+                    self.objective._func._manipulate_state.apply_update()
 
-            self.model.posterior(self.params)
-            self.acquisition_fcn.update_K_xX_dx()
+                self.model.posterior(self.params)
+                self.acquisition_fcn.update_K_xX_dx()
 
-            # Stop sampling if differece of values of acquired points is smaller than a threshold.
-            # Equivalent to: variance of gradient did not change larger than a threshold.
-            if self.epsilon_diff_acq_value is not None:
-                if acq_value_old is not None:
-                    diff = acq_value - acq_value_old
-                    if diff < self.epsilon_diff_acq_value:
-                        if self.verbose:
-                            print(
-                                f"Stop sampling after {i+1} samples, since gradient certainty is {diff}."
-                            )
-                        break
-                acq_value_old = acq_value
+                # Stop sampling if differece of values of acquired points is smaller than a threshold.
+                # Equivalent to: variance of gradient did not change larger than a threshold.
+                if self.epsilon_diff_acq_value is not None:
+                    if acq_value_old is not None:
+                        diff = acq_value - acq_value_old
+                        if diff < self.epsilon_diff_acq_value:
+                            if self.verbose:
+                                print(
+                                    f"Stop sampling after {i+1} samples, since gradient certainty is {diff}."
+                                )
+                            break
+                    acq_value_old = acq_value
+            # --- END ORIGINAL GIBO CODE ---
 
-        with torch.no_grad():
-            self.optimizer_torch.zero_grad()
-            mean_d, variance_d = self.model.posterior_derivative(self.params)
-            params_grad = -mean_d.view(1, self.D)
-            if self.normalize_gradient:
-                lengthscale = self.model.covar_module.base_kernel.lengthscale.detach()
-                params_grad = torch.nn.functional.normalize(params_grad) * lengthscale
-            if self.standard_deviation_scaling:
-                params_grad = params_grad / torch.diag(variance_d.view(self.D, self.D))
-            if self.lr_schedular:
-                lr = [v for k, v in self.lr_schedular.items() if k <= self.iteration][
-                    -1
-                ]
-                self.params.grad[:] = lr * params_grad  # Define as gradient ascent.
-            else:
-                self.params.grad[:] = params_grad  # Define as gradient ascent.
-            self.optimizer_torch.step()
-            self.iteration += 1
+        elif self.inner_loop_mode == 'prob_wolfe':
+            # --- Variant A: Probabilistic Wolfe inner loop ---
+            # Compute fixed search direction and baseline values once,
+            # before any GI samples are collected this iteration.
+            p_direction, _ = get_search_direction(self.model, self.params)
+            phi_0, phi_prime_0, _ = eval_phi_0(self.model, self.params, p_direction)
+
+            # Fallback step size: use delta (upper bound of local search region)
+            alpha_candidate = float(self.delta) if self.delta is not None else 0.1
+            _inner_samples = 0
+            _wolfe_satisfied = False
+
+            for i in range(self.max_samples_per_iteration):
+                # ① Real function evaluation via GI acquisition function.
+                new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
+                new_y = self.objective(new_x)
+                _inner_samples += 1
+
+                # Update GP with new observation.
+                self.model.append_train_data(new_x, new_y)
+                self.model.posterior(self.params)
+                self.acquisition_fcn.update_K_xX_dx()
+
+                # ② Recompute alpha_candidate from updated GP posterior.
+                delta_val = float(self.delta) if self.delta is not None else 0.1
+                alpha_candidate = find_alpha_star(
+                    self.model, self.params, p_direction, delta=delta_val
+                )
+
+                # ③ Check probabilistic Wolfe condition at alpha_candidate.
+                p_wolfe_val = compute_p_wolfe(
+                    self.model, self.params, alpha_candidate, p_direction,
+                    phi_0=phi_0, phi_prime_0=phi_prime_0,
+                    c1=self.c1, c2=self.c2,
+                )
+
+                if self.verbose:
+                    print(
+                        f"  Prob-Wolfe iter {i+1}: alpha={alpha_candidate:.4f}, "
+                        f"p_Wolfe={p_wolfe_val:.4f} (threshold={self.c_W})"
+                    )
+
+                if p_wolfe_val > self.c_W:
+                    _wolfe_satisfied = True
+                    if self.verbose:
+                        print(
+                            f"  Wolfe satisfied after {_inner_samples} inner samples."
+                        )
+                    break
+
+            if self.verbose and not _wolfe_satisfied:
+                print(
+                    f"  Prob-Wolfe: max_samples ({self.max_samples_per_iteration}) "
+                    f"reached without satisfying Wolfe. Using alpha={alpha_candidate:.4f}."
+                )
+            # --- END Variant A inner loop ---
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
+
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Branch gradient step on inner_loop_mode
+        # ============================================================
+        if self.inner_loop_mode == 'original':
+            # --- ORIGINAL GIBO CODE (unchanged) ---
+            with torch.no_grad():
+                self.optimizer_torch.zero_grad()
+                mean_d, variance_d = self.model.posterior_derivative(self.params)
+                params_grad = -mean_d.view(1, self.D)
+                if self.normalize_gradient:
+                    lengthscale = self.model.covar_module.base_kernel.lengthscale.detach()
+                    params_grad = torch.nn.functional.normalize(params_grad) * lengthscale
+                if self.standard_deviation_scaling:
+                    params_grad = params_grad / torch.diag(variance_d.view(self.D, self.D))
+                if self.lr_schedular:
+                    lr = [v for k, v in self.lr_schedular.items() if k <= self.iteration][
+                        -1
+                    ]
+                    self.params.grad[:] = lr * params_grad  # Define as gradient ascent.
+                else:
+                    self.params.grad[:] = params_grad  # Define as gradient ascent.
+                self.optimizer_torch.step()
+                self.iteration += 1
+            # --- END ORIGINAL GIBO CODE ---
+
+        elif self.inner_loop_mode == 'prob_wolfe':
+            # --- Variant A: Direct parameter update along p_direction ---
+            # Bypasses SGD entirely: theta_{t+1} = theta_t + alpha* * p
+            # p_direction is already normalized; alpha_candidate is the
+            # argmax mu_post step size from the probabilistic Wolfe check.
+            with torch.no_grad():
+                self.optimizer_torch.zero_grad()
+                self.params.data += alpha_candidate * p_direction
+                self.iteration += 1
+            # --- END Variant A gradient step ---
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
 
         if (
             type(self.objective._func) is EnvironmentObjective
