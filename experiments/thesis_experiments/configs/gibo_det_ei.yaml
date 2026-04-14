@@ -1,0 +1,48 @@
+# ============================================================
+# THESIS EXPERIMENT — Variant B Config
+# ============================================================
+# GIBO with deterministic Wolfe conditions + EI step size selection.
+# alpha* = argmax EI(alpha), stop when strong Wolfe holds on mu_post.
+# All GP/model params identical to baseline for fair comparison.
+#
+# Run: python run_thesis_experiment.py
+#          -c experiments/thesis_experiments/configs/gibo_det_ei.yaml
+#          -d experiments/thesis_experiments/data
+
+name: gibo_det_ei
+description: "Variant B: deterministic strong Wolfe, EI-based step size"
+
+dimensions: [4, 8, 12, 16, 20, 24, 28, 32, 36]
+n_runs: 40
+seed_start: 0
+max_objective_calls: 300
+
+noise_variance: 0.01
+gp_hypers:
+  outputscale: 1.0
+factor_lengthscale: 2
+
+inner_loop_mode: det_ei
+max_samples_per_iteration: 50   # safety limit replaces fixed M
+epsilon_diff_acq_value: null    # our stopping criterion replaces epsilon_diff
+
+lr: 0.25                        # kept for structural consistency (unused)
+lr_schedular: null
+normalize_gradient: false       # direction already normalized via p
+standard_deviation_scaling: false
+
+N_max: variable                 # 5 * dim
+optimize_hyperparameters: false
+no_noise_optimization: false
+
+acqf_num_restarts: 5
+acqf_raw_samples: 64
+delta: 0.2                      # also used as upper bound for alpha search
+
+c1: 0.05                        # Armijo constant
+c2: 0.5                         # curvature constant
+c_W: 0.3                        # unused for det_ei (kept for structural consistency)
+
+
+results_dir: experiments/thesis_experiments/results
+verbose: false

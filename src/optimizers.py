@@ -615,6 +615,11 @@ class BayesianGradientAscent(AbstractOptimizer):
         self.c1 = c1
         self.c2 = c2
         self.c_W = c_W
+        # Metrics from last step() call — read by thesis experiment runner.
+        # Keys populated by all modes: n_inner_samples, alpha, grad_norm, sigma2.
+        # Additional keys by mode: p_wolfe (prob_wolfe), wolfe_satisfied +
+        # armijo_ok + curvature_ok (det_ei).
+        self.last_step_info: dict = {}
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
@@ -659,8 +664,9 @@ class BayesianGradientAscent(AbstractOptimizer):
         # Description: Branch on inner_loop_mode for adaptive termination
         # ============================================================
         if self.inner_loop_mode == 'original':
-            # --- ORIGINAL GIBO CODE (unchanged) ---
+            # --ORIGINAL GIBO CODE (unchanged) 
             acq_value_old = None
+            _n_inner = 0 #change
             for i in range(self.max_samples_per_iteration):
                 # Optimize acquistion function and get new observation.
                 new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
@@ -678,6 +684,7 @@ class BayesianGradientAscent(AbstractOptimizer):
 
                 self.model.posterior(self.params)
                 self.acquisition_fcn.update_K_xX_dx()
+                _n_inner += 1 #change
 
                 # Stop sampling if differece of values of acquired points is smaller than a threshold.
                 # Equivalent to: variance of gradient did not change larger than a threshold.
@@ -691,7 +698,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                                 )
                             break
                     acq_value_old = acq_value
-            # --- END ORIGINAL GIBO CODE ---
+            # --- END ORIGINAL GIBO CODE
 
         elif self.inner_loop_mode == 'prob_wolfe':
             # --- Variant A: Probabilistic Wolfe inner loop ---
@@ -706,6 +713,8 @@ class BayesianGradientAscent(AbstractOptimizer):
             delta_val = float(self.delta) if self.delta is not None else 0.1
             alpha_candidate = delta_val   # fallback: upper bound of search
             _wolfe_satisfied = False
+            p_wolfe_val = 0.0             # default if loop never runs
+            _n_inner = 0
 
             for i in range(self.max_samples_per_iteration):
                 # 1. Real function evaluation via GI acquisition function.
@@ -716,6 +725,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.model.append_train_data(new_x, new_y)
                 self.model.posterior(self.params)
                 self.acquisition_fcn.update_K_xX_dx()
+                _n_inner += 1
 
                 # 2. Fix search direction from first GI-informed posterior.
                 # phi_0 and phi_prime_0 are computed here so that direction
@@ -771,9 +781,12 @@ class BayesianGradientAscent(AbstractOptimizer):
             delta_val = float(self.delta) if self.delta is not None else 0.1
             alpha_candidate = delta_val
             _wolfe_satisfied = False
+            armijo_ok = False             # default if loop never runs
+            curvature_ok = False
+            _n_inner = 0
 
             for i in range(self.max_samples_per_iteration):
-                # 1 Real function evaluation via GI acquisition function.
+                # 1. Real function evaluation via GI acquisition function.
                 new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
                 new_y = self.objective(new_x)
 
@@ -781,8 +794,9 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.model.append_train_data(new_x, new_y)
                 self.model.posterior(self.params)
                 self.acquisition_fcn.update_K_xX_dx()
+                _n_inner += 1
 
-                # 2 Fix search direction from first GI-informed posterior.
+                # 2. Fix search direction from first GI-informed posterior.
                 if p_direction is None:
                     p_direction, _ = get_search_direction(self.model, self.params)
                     phi_0, phi_prime_0, _ = eval_phi_0(
@@ -861,8 +875,51 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.optimizer_torch.zero_grad()
                 if p_direction is not None:
                     self.params.data += alpha_candidate * p_direction
-                self.iteration += 1
+                self.iteration += 1 
             # --- END Variant A & B gradient step ---
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
+
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Collect per-step metrics into last_step_info
+        # ============================================================
+        with torch.no_grad():
+            _post = self.model.posterior(self.params)
+            _sigma2 = _post.mvn.variance.squeeze().item()
+            _mean_d, _ = self.model.posterior_derivative(self.params)
+            _grad_norm = _mean_d.norm().item()
+
+        if self.inner_loop_mode == 'original':
+            self.last_step_info = {
+                'mode': 'original',
+                'n_inner_samples': _n_inner,
+                'alpha': None,
+                'grad_norm': _grad_norm,
+                'sigma2': _sigma2,
+            }
+        elif self.inner_loop_mode == 'prob_wolfe':
+            self.last_step_info = {
+                'mode': 'prob_wolfe',
+                'n_inner_samples': _n_inner,
+                'alpha': float(alpha_candidate) if p_direction is not None else None,
+                'p_wolfe': float(p_wolfe_val),
+                'wolfe_satisfied': _wolfe_satisfied,
+                'grad_norm': _grad_norm,
+                'sigma2': _sigma2,
+            }
+        elif self.inner_loop_mode == 'det_ei':
+            self.last_step_info = {
+                'mode': 'det_ei',
+                'n_inner_samples': _n_inner,
+                'alpha': float(alpha_candidate) if p_direction is not None else None,
+                'wolfe_satisfied': _wolfe_satisfied,
+                'armijo_ok': armijo_ok,
+                'curvature_ok': curvature_ok,
+                'grad_norm': _grad_norm,
+                'sigma2': _sigma2,
+            }
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================

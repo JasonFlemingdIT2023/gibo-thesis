@@ -1,0 +1,46 @@
+# ============================================================
+# THESIS EXPERIMENT — Variant B Config (QUICK TEST, 10 calls)
+# ============================================================
+# Identical to gibo_det_ei.yaml except max_objective_calls: 10.
+# For fast local testing without the --smoke flag.
+#
+# Run: python run_thesis_experiment.py
+#          -c experiments/thesis_experiments/configs/gibo_det_ei_quick.yaml
+#          -d experiments/thesis_experiments/data
+
+name: gibo_det_ei_quick
+description: "Quick test — Variant B deterministic Wolfe + EI: 10 objective calls"
+
+dimensions: [4, 8, 12, 16, 20]
+n_runs: 40
+seed_start: 0
+max_objective_calls: 10
+
+noise_variance: 0.01
+gp_hypers:
+  outputscale: 1.0
+factor_lengthscale: 2
+
+inner_loop_mode: det_ei
+max_samples_per_iteration: 50
+epsilon_diff_acq_value: null
+
+lr: 0.25
+lr_schedular: null
+normalize_gradient: false
+standard_deviation_scaling: false
+
+N_max: variable
+optimize_hyperparameters: false
+no_noise_optimization: false
+
+acqf_num_restarts: 5
+acqf_raw_samples: 64
+delta: 0.2
+
+c1: 0.05
+c2: 0.5
+c_W: 0.3
+
+results_dir: experiments/thesis_experiments/results_quick
+verbose: false

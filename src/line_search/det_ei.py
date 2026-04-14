@@ -22,6 +22,15 @@ Reference:
     Jones et al. (1998), Efficient Global Optimization of Expensive Black-Box
     Functions. Journal of Global Optimization.
     Nocedal & Wright (2006), Numerical Optimization, Chapter 3.
+    
+Design Reason:
+    The standard BoTorch botorch.acquisition.analytic.ExpectedImprovement operates over the full D-dimensional input space
+    and is designed to select the next observation point. 
+    In contrast, the line search requires optimizing EI over a single scalar step size alpha 
+    along a fixed search direction p, i.e. EI(alpha) = EI(θ_t + alpha·p). 
+    Adapting BoTorch EI to this 1D parametrization would require a non standard coordinate transformation 
+    and would obscure the analytical structure of the line search. 
+    A direct scalar implementation via scipy.optimize.minimize_scalar is therefore both simpler and more transparent.
 """
 
 # ============================================================

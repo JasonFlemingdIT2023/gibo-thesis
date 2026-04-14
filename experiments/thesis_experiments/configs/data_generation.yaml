@@ -1,0 +1,17 @@
+# ============================================================
+# THESIS EXPERIMENT — Data Generation Config
+# ============================================================
+# Matches the original GIBO data generation exactly (generate_data_default.yaml).
+# Run: python generate_thesis_data.py -c experiments/thesis_experiments/configs/data_generation.yaml
+
+dimensions: [4, 8, 12, 16, 20, 24, 28, 32, 36]
+num_objectives: 40        # number of different GP functions per dimension
+num_samples: 1000         # training points to define each GP function
+noise_variance: 0.01      # observation noise
+factor_lengthscale: 2     # matches GIBO default
+gamma: 0.3                # matches GIBO default
+gp_hypers:
+  outputscale: 1.0
+n_max: 15                 # candidates for f_max search (matches GIBO default)
+
+out_dir: experiments/thesis_experiments/data

@@ -8,6 +8,7 @@ glfw==2.1.0
 gpytorch==1.2.0
 gym==0.9.3
 mujoco-py==0.5.7
-torch==1.6.0
+torch==1.7.1
 torchvision==0.7.0
+scipy==1.10.1
 
