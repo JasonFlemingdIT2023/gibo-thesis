@@ -127,6 +127,17 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
         c1=cfg["c1"],
         c2=cfg["c2"],
         c_W=cfg["c_W"],
+        # ============================================================
+        # THESIS EXPERIMENT EXTENSION — BEGIN
+        # Description: Pass alpha_max and min_samples_per_iteration from
+        #   YAML config, with safe defaults (None and 1) so that existing
+        #   configs without these keys continue to work unchanged.
+        # ============================================================
+        alpha_max=cfg.get("alpha_max", None),
+        min_samples_per_iteration=cfg.get("min_samples_per_iteration", 1),
+        # ============================================================
+        # THESIS EXPERIMENT EXTENSION — END
+        # ============================================================
     )
 
 

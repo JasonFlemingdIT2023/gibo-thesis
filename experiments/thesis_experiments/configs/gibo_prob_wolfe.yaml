@@ -24,7 +24,8 @@ gp_hypers:
 factor_lengthscale: 2
 
 inner_loop_mode: prob_wolfe
-max_samples_per_iteration: 50   # safety limit replaces fixed M
+max_samples_per_iteration: dim_search_space   # safety limit = dim (fair vs baseline)
+min_samples_per_iteration: 2                  # collect at least 2 GI samples before stopping
 epsilon_diff_acq_value: null    # our stopping criterion replaces epsilon_diff
 
 lr: 0.25                        # kept for structural consistency (unused)
@@ -38,11 +39,12 @@ no_noise_optimization: false
 
 acqf_num_restarts: 5
 acqf_raw_samples: 64
-delta: 0.2                      # also used as upper bound for alpha search
+delta: 0.2                      # GI acquisition trust region (±delta box around theta)
+alpha_max: 0.4                  # upper bound for line search (separate from delta)
 
 c1: 0.05                        # Armijo constant
 c2: 0.5                         # curvature constant
-c_W: 0.3                        # Wolfe probability threshold
+c_W: 0.5                        # Wolfe probability threshold (increased from 0.3)
 
 results_dir: experiments/thesis_experiments/results
 verbose: false
