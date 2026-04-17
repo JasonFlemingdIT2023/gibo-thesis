@@ -719,17 +719,17 @@ class BayesianGradientAscent(AbstractOptimizer):
             phi_prime_0 = None
             # ============================================================
             # THESIS EXTENSION — BEGIN
-            # Description: Use alpha_max (separate from delta) as the upper
-            #   bound for line search so that GI acquisition bounds (±delta)
-            #   are not affected when the line search range is changed.
+            # Description: alpha_max = 2*l (dynamic, from model lengthscale)
+            #   when not set explicitly. At 2*l the SE kernel correlation is
+            #   exp(-2) ~ 13.5% — the GP is essentially uninformed beyond that.
+            #   Kept separate from delta so GI bounds (±delta) are unaffected.
             # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
             # delta_val = float(self.delta) if self.delta is not None else 0.1
             # --- END ORIGINAL GIBO CODE ---
-            alpha_max_val = (
-                float(self.alpha_max) if self.alpha_max is not None
-                else float(self.delta) if self.delta is not None
-                else 0.1
-            )
+            if self.alpha_max is not None:
+                alpha_max_val = float(self.alpha_max)
+            else:
+                alpha_max_val = 2.0 * self.model.covar_module.base_kernel.lengthscale.mean().item()
             # ============================================================
             # THESIS EXTENSION — END
             # ============================================================
@@ -750,20 +750,54 @@ class BayesianGradientAscent(AbstractOptimizer):
                 _n_inner += 1
 
                 # 2. Fix search direction from first GI-informed posterior.
-                # phi_0 and phi_prime_0 are computed here so that direction
-                # and baseline are consistent with the same GP state.
+                # phi_0 and phi_prime_0 are computed once and reused every
+                # inner iteration — p is frozen for the whole inner loop.
                 if p_direction is None:
                     p_direction, _ = get_search_direction(self.model, self.params)
                     phi_0, phi_prime_0, _ = eval_phi_0(
                         self.model, self.params, p_direction
                     )
+                    # ============================================================
+                    # THESIS EXTENSION — BEGIN
+                    # Description: Guard for non-ascending direction. Checked once
+                    #   here (phi_prime_0 is fixed for the entire inner loop).
+                    #   phi'(0) <= 0 means p points downhill on the posterior mean.
+                    #   More GI samples cannot fix this — break immediately.
+                    #   Without this guard, Armijo would be trivially satisfied for
+                    #   negative phi'(0), making p_Wolfe spuriously high.
+                    # ============================================================
+                    if float(phi_prime_0) <= 0.0:
+                        alpha_candidate = float(self.lr) if self.lr is not None else 0.25
+                        p_wolfe_val = 0.0
+                        break
+                    # ============================================================
+                    # THESIS EXTENSION — END
+                    # ============================================================
 
                 # 3. Recompute alpha_candidate from updated GP posterior.
+                # ============================================================
+                # THESIS EXTENSION — BEGIN
+                # Description: Cubic Hermite step size. Pass alpha_max_val (=2*l)
+                #   and probe (GI trust region radius) separately so the cubic can
+                #   extrapolate beyond the trust region. Cached phi_0/phi_prime_0
+                #   avoid a redundant GP call at alpha=0 inside find_alpha_star.
+                # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
+                # alpha_candidate = find_alpha_star(
+                #     self.model, self.params, p_direction, delta=alpha_max_val
+                # )
+                # --- END ORIGINAL GIBO CODE ---
                 alpha_candidate = find_alpha_star(
-                    self.model, self.params, p_direction, delta=alpha_max_val # new delta here old is self.delta
+                    self.model, self.params, p_direction,
+                    delta=alpha_max_val,
+                    probe=float(self.delta) if self.delta is not None else 0.2,
+                    phi_0=phi_0,
+                    phi_prime_0=phi_prime_0,
                 )
+                # ============================================================
+                # THESIS EXTENSION — END
+                # ============================================================
 
-                # 4. Check probabilistic Wolfe condition at alpha_candidate.
+                # 4. Compute p_Wolfe at alpha_candidate.
                 p_wolfe_val = compute_p_wolfe(
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
@@ -776,14 +810,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                         f"p_Wolfe={p_wolfe_val:.4f} (threshold={self.c_W})"
                     )
 
-                # ============================================================
-                # THESIS EXTENSION — BEGIN
-                # Description: min_samples_per_iteration --> enforce a minimum
-                 #  number of GI samples before the Wolfe criterion can fire.
-                #   Prevents premature termination in early outer iterations
-                #   when the GP posterior is barely informed.
-                # ============================================================
-                if p_wolfe_val > self.c_W and _n_inner >= self.min_samples_per_iteration:
+                if p_wolfe_val > self.c_W:
                     _wolfe_satisfied = True
                     if self.verbose:
                         print(
@@ -812,16 +839,14 @@ class BayesianGradientAscent(AbstractOptimizer):
             eta = None
             # ============================================================
             # THESIS EXTENSION — BEGIN
-            # Description: Use alpha_max (separate from delta) as the upper
-            #   bound for EI line search — mirrors the prob_wolfe fix above.
+            # Description: alpha_max = 2*l (dynamic) — mirrors prob_wolfe block.
             # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
             # delta_val = float(self.delta) if self.delta is not None else 0.1
             # --- END ORIGINAL GIBO CODE ---
-            alpha_max_val = (
-                float(self.alpha_max) if self.alpha_max is not None
-                else float(self.delta) if self.delta is not None
-                else 0.1
-            )
+            if self.alpha_max is not None:
+                alpha_max_val = float(self.alpha_max)
+            else:
+                alpha_max_val = 2.0 * self.model.covar_module.base_kernel.lengthscale.mean().item()
             # ============================================================
             # THESIS EXTENSION — END
             # ============================================================
@@ -848,11 +873,24 @@ class BayesianGradientAscent(AbstractOptimizer):
                     phi_0, phi_prime_0, _ = eval_phi_0(
                         self.model, self.params, p_direction
                     )
-                    eta = phi_0  # EI reference: current posterior mean at theta
+                    eta = phi_0
+                    # ============================================================
+                    # THESIS EXTENSION — BEGIN
+                    # Description: Same phi'(0) <= 0 guard as prob_wolfe.
+                    #   Without it, Armijo is trivially satisfied for negative
+                    #   phi'(0), causing immediate termination in the wrong direction.
+                    # ============================================================
+                    if float(phi_prime_0) <= 0.0:
+                        alpha_candidate = float(self.lr) if self.lr is not None else 0.25
+                        _wolfe_satisfied = False
+                        break
+                    # ============================================================
+                    # THESIS EXTENSION — END
+                    # ============================================================
 
-                # 3 Recompute alpha_candidate via EI maximization.
+                # 3. Recompute alpha_candidate via EI maximization.
                 alpha_candidate = find_alpha_star_ei(
-                    self.model, self.params, p_direction, eta=eta, delta=alpha_max_val #also changed in det_ei
+                    self.model, self.params, p_direction, eta=eta, delta=alpha_max_val
                 )
 
                 # 4 Check strong Wolfe conditions deterministically on mu_post.
@@ -869,11 +907,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                         f"Curvature={'OK' if curvature_ok else 'NO'}"
                     )
 
-                # ============================================================
-                # THESIS EXTENSION — BEGIN
-                # Description: min_samples_per_iteration — mirrors prob_wolfe.
-                # ============================================================
-                if armijo_ok and curvature_ok and _n_inner >= self.min_samples_per_iteration:
+                if armijo_ok and curvature_ok:
                     _wolfe_satisfied = True
                     if self.verbose:
                         print(
