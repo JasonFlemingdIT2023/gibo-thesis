@@ -2,25 +2,28 @@
 Variant A: Probabilistic Wolfe Conditions for inner loop termination.
 
 Design:
-    alpha_candidate = cubic_hermite_max(phi(0), phi'(0), phi(probe), phi'(probe))
+    alpha_candidate = argmax_{alpha in (0, 2*l]} mu_post(theta + alpha*p)
     Stop inner loop when p_Wolfe(alpha_candidate) > c_W.
 
-Step size method: cubic Hermite interpolation using two GP posterior
-evaluations — at alpha=0 (theta) and at alpha=probe (GI trust region
-boundary, typically 0.2). The cubic is fitted with scipy.interpolate
-.CubicHermiteSpline and its maximum is found with minimize_scalar on
-[0, alpha_max], where alpha_max = 2*l (SE lengthscale).
+Step size method: direct argmax of the GP posterior mean along p, bounded
+to [0, 2*l] where l is the model lengthscale. This is principled because
+GI sampling is line-aligned (samples are collected in a box centred along
+p, see prob_wolfe inner loop in optimizers.py), so the GP posterior is
+calibrated along the search line — not just within +-delta around theta.
 
-The cubic extrapolates naturally beyond the probe interval: if phi is
-still increasing at the probe, the maximum will lie beyond probe,
-yielding larger steps than trust-region-bounded argmax.
+Previous version used cubic Hermite extrapolation as a workaround for the
+GP being uninformed beyond delta=0.2 around theta. With line-aligned GI
+sampling the posterior is informed along the line, making direct argmax
+the correct and simpler choice. Cubic extrapolation into uninformed regions
+was replaced because it represented polynomial fantasy rather than
+GP-grounded prediction.
 
-Theoretical bound: at distance 2*l the SE prior correlation is
-exp(-2) ≈ 13.5% — the GP is essentially extrapolating (Rasmussen &
-Williams, 2006, Ch. 4), making 2*l a principled upper bound.
+alpha_max = 2*l bound: at distance 2*l the SE prior correlation is
+exp(-2) ~ 13.5% — the GP is essentially extrapolating beyond that point.
+This provides a principled upper bound (Rasmussen & Williams, 2006, Ch. 4).
 
-Guard: if phi'(0) <= 0, falls back to lr_fallback (gradient direction
-not ascending, occurs near convergence where the GP is unreliable).
+Guard: if phi'(0) <= 0, falls back to lr * l (gradient direction not
+ascending; the optimizer guard fires first, so this is defensive only).
 
 Wolfe conditions for maximization:
     W-I  (Armijo):   a_t = phi(alpha) - phi(0) - c1*alpha*phi'(0) >= 0
@@ -30,18 +33,17 @@ References:
     Mahsereci & Hennig (2017), Probabilistic Line Searches for Stochastic
     Optimization. JMLR 18. Signs and kernel adapted for maximization and
     SE posterior (not Wiener process).
-    Nocedal & Wright (2006), Numerical Optimization, Sections 3.4-3.5.
+    Nocedal & Wright (2006), Numerical Optimization, Sections 3.1-3.3.
 """
 
 # ============================================================
 # THESIS EXTENSION — BEGIN
-# Description: Full implementation of Variant A (Phase 2)
+# Description: Full implementation of Variant A (Phase 2 + Phase 3)
 # ============================================================
 
 from typing import Optional, Tuple
 
 import torch
-from scipy.interpolate import CubicHermiteSpline
 from scipy.optimize import minimize_scalar
 from scipy.stats import multivariate_normal, norm as scipy_norm
 
@@ -54,7 +56,7 @@ from src.line_search.utils import (
 
 
 # ---------------------------------------------------------------------------
-# Step 1: Find alpha_candidate via cubic Hermite interpolation
+# Step 1: Find alpha_candidate via argmax mu_post along p
 # ---------------------------------------------------------------------------
 
 def find_alpha_star(
@@ -62,101 +64,78 @@ def find_alpha_star(
     theta: torch.Tensor,
     p: torch.Tensor,
     delta: Optional[float] = None,
-    probe: float = 0.2,
     phi_0: Optional[torch.Tensor] = None,
     phi_prime_0: Optional[torch.Tensor] = None,
     lr_fallback: float = 0.25,
 ) -> float:
-    """Find alpha* via cubic Hermite interpolation with probe at trust region boundary.
+    """Find alpha* = argmax_{alpha in (0, alpha_max]} mu_post(theta + alpha*p).
 
-    Evaluates phi and phi' at alpha=0 and alpha=probe from the GP posterior
-    (no real function evaluations). Fits a CubicHermiteSpline through those
-    four values and finds its maximum on [0, alpha_max] via minimize_scalar.
+    Uses scipy.optimize.minimize_scalar (Brent, bounded) on -phi(alpha).
+    All evaluations are analytical GP posterior calls — no real rollouts.
 
-    alpha_max = 2 * lengthscale  if delta is None (dynamic, model-derived)
-              = delta             otherwise.
+    This is principled because GI sampling is line-aligned: the optimizer
+    shifts the GI acquisition bounds to be centred along p (see prob_wolfe
+    inner loop in optimizers.py), so the GP posterior is calibrated along
+    the entire search line up to alpha_max = 2*l.
 
-    The cubic can extrapolate beyond the probe interval, producing larger
-    steps when phi is still increasing at the probe — fixing the systematic
-    underestimation from trust-region-bounded argmax mu_post.
+    Previous version (cubic Hermite): used polynomial extrapolation to
+    work around the GP being uninformed beyond delta=0.2. With line-aligned
+    GI sampling the posterior is informed along the line, making direct
+    argmax the correct choice (no extrapolation needed).
 
-    Guard: returns lr_fallback if phi'(0) <= 0 (gradient direction not
-    ascending; occurs near convergence where the posterior gradient is noisy).
+    alpha_max = 2*l: SE correlation at distance 2*l is exp(-2) ~ 13.5%,
+    so the GP is essentially blind beyond that (Rasmussen & Williams 2006).
+
+    Guard: if phi'(0) <= 0, returns lr * l as fallback (dimensionally
+    consistent with baseline step lr * l along normalised gradient).
+    The optimizer guard fires first; this is defensive for standalone use.
 
     Args:
         model: DerivativeExactGPSEModel with current training data.
         theta: Current parameters, shape [1, D].
         p: Normalized search direction, shape [1, D].
-        delta: alpha_max (upper clamp). The optimizer always passes 2*l here
-               explicitly. If None (e.g. in unit tests), computed from model.
-        probe: Second evaluation point for cubic fitting; should equal the GI
-               trust region radius (optimizer's self.delta = 0.2).
+        delta: alpha_max (upper clamp). Optimizer passes 2*l explicitly.
+               If None (unit tests / check_prob_wolfe), computed from model.
         phi_0: Pre-computed mu_post(theta) — avoids redundant GP call.
         phi_prime_0: Pre-computed p^T mean_d(theta) — same.
-        lr_fallback: Step returned when phi'(0) <= 0 (defensive; the optimizer
-                     guards against this before calling, but kept for standalone
-                     use in tests and check_prob_wolfe).
+        lr_fallback: Base lr for fallback step; actual return is lr_fallback*l.
 
     Returns:
         Scalar float alpha* in (0, alpha_max].
     """
     # ============================================================
     # THESIS EXTENSION — BEGIN
-    # Description: Replace argmax mu_post (minimize_scalar on posterior mean,
-    #   bounded to [0, delta]) with cubic Hermite interpolation that can
-    #   extrapolate beyond the GI trust region.
-    # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
-    # def neg_phi(alpha: float) -> float:
-    #     phi, _, _ = eval_phi(model, theta, alpha, p)
-    #     return -phi.item()
-    # result = minimize_scalar(
-    #     neg_phi,
-    #     bounds=(1e-6, delta),
-    #     method='bounded',
-    #     options={'xatol': 1e-5, 'maxiter': 500},
-    # )
-    # return float(result.x)
-    # --- END ORIGINAL GIBO CODE ---
+    # Description: Phase 1 — argmax mu_post on calibrated posterior.
+    #   Phase 3 replaces cubic Hermite (which was a workaround for
+    #   uninformed GP posterior). Now that GI sampling is line-aligned
+    #   (Änderung 1 / Phase 2), the posterior along p is calibrated and
+    #   direct argmax is the honest, principled choice.
+    # --- PREVIOUS THESIS CODE (cubic Hermite, replaced by Phase 1/3) ---
+    # spline = CubicHermiteSpline(x=[0, probe], y=[phi_0, phi_probe],
+    #                              dydx=[phi_prime_0, phi_prime_probe])
+    # result = minimize_scalar(lambda a: -float(spline(a)),
+    #                          bounds=(0, alpha_max), method='bounded')
+    # --- END PREVIOUS THESIS CODE ---
 
-    # 1. Baseline values at alpha=0 (use cache if provided)
-    if phi_0 is None or phi_prime_0 is None:
-        phi_0_t, phi_prime_0_t, _ = eval_phi_0(model, theta, p)
-    else:
-        phi_0_t, phi_prime_0_t = phi_0, phi_prime_0
-
-    phi_prime_0_val = float(phi_prime_0_t)
-
-    # 2. Guard: direction not ascending → fallback
-    if phi_prime_0_val <= 0.0:
-        return lr_fallback
-
-    # 3. alpha_max: either passed explicitly or 2 * model lengthscale
+    # 1. alpha_max: passed explicitly (2*l from optimizer) or computed here
     if delta is None:
         ls = model.covar_module.base_kernel.lengthscale.mean().item()
         alpha_max = 2.0 * ls
     else:
         alpha_max = float(delta)
 
-    # 4. Probe point must not exceed alpha_max
-    a = min(float(probe), alpha_max)
-    if a < 1e-8:
-        return min(lr_fallback, alpha_max)
+    # 2. Guard: direction not ascending → dimensionally consistent fallback
+    if phi_prime_0 is not None and float(phi_prime_0) <= 0.0:
+        ls = model.covar_module.base_kernel.lengthscale.mean().item()
+        return lr_fallback * ls
 
-    # 5. Evaluate phi and phi' at probe point (GP posterior, no rollout)
-    phi_0_val = float(phi_0_t)
-    phi_a_t, phi_prime_a_t, _ = eval_phi(model, theta, a, p)
+    # 3. argmax mu_post(theta + alpha*p) on (0, alpha_max]
+    def neg_phi(alpha: float) -> float:
+        phi, _, _ = eval_phi(model, theta, alpha, p)
+        return -phi.item()
 
-    # 6. Fit cubic Hermite spline through (0, phi_0, phi'_0) and (a, phi_a, phi'_a)
-    #    scipy.interpolate.CubicHermiteSpline takes knots, values, and derivatives.
-    spline = CubicHermiteSpline(
-        x=[0.0, a],
-        y=[phi_0_val, float(phi_a_t)],
-        dydx=[phi_prime_0_val, float(phi_prime_a_t)],
-    )
-
-    # 7. Maximise the spline on (0, alpha_max] via bounded Brent search on -spline
     result = minimize_scalar(
-        lambda alpha: -float(spline(alpha)),
+        neg_phi,
         bounds=(1e-8, alpha_max),
         method='bounded',
         options={'xatol': 1e-5, 'maxiter': 500},
@@ -308,15 +287,13 @@ def check_prob_wolfe(
     phi_0: torch.Tensor,
     phi_prime_0: torch.Tensor,
     delta: Optional[float] = None,
-    probe: float = 0.2,
     c1: float = 0.05,
     c2: float = 0.5,
     c_W: float = 0.3,
 ) -> Tuple[bool, float, float]:
     """Perform one probabilistic Wolfe check for the current GP state.
 
-    Computes alpha_candidate via cubic Hermite interpolation, then evaluates
-    p_Wolfe at that candidate. Called once per inner loop iteration.
+    Computes alpha_candidate via argmax mu_post, then evaluates p_Wolfe.
 
     Args:
         model: DerivativeExactGPSEModel (updated with latest GI sample).
@@ -324,20 +301,19 @@ def check_prob_wolfe(
         p: Normalized search direction (fixed for the inner loop), shape [1, D].
         phi_0: Cached mu_post(theta) — computed once before inner loop.
         phi_prime_0: Cached p^T mean_d(theta) — same.
-        delta: alpha_max for cubic search. If None, uses 2 * lengthscale.
-        probe: Second evaluation point for cubic fitting (GI trust region radius).
+        delta: alpha_max. If None, uses 2 * lengthscale from model.
         c1: Armijo constant.
         c2: Curvature constant.
         c_W: Wolfe probability threshold for termination.
 
     Returns:
         wolfe_satisfied: True if p_Wolfe(alpha_candidate) > c_W.
-        alpha_candidate: The step size found by cubic Hermite.
+        alpha_candidate: The step size from argmax mu_post.
         p_wolfe_value: The computed p_Wolfe probability.
     """
     alpha_candidate = find_alpha_star(
         model, theta, p,
-        delta=delta, probe=probe,
+        delta=delta,
         phi_0=phi_0, phi_prime_0=phi_prime_0,
     )
     p_wolfe_value = compute_p_wolfe(
