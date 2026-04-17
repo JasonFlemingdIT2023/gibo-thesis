@@ -545,7 +545,8 @@ class BayesianGradientAscent(AbstractOptimizer):
         c2: float = 0.5,
         c_W: float = 0.3,
         alpha_max: Optional[float] = None, # other delta to not interfere GI trust region delta
-        min_samples_per_iteration: int = 1,# min samples for ioteration as option
+        min_samples_per_iteration: int = 1,# min samples for iteration as option
+        sigma_floor: float = 0.1,          # variance floor fraction (prob_wolfe only)
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
@@ -622,6 +623,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         # unaffected when the line search range is changed.
         self.alpha_max = alpha_max
         self.min_samples_per_iteration = min_samples_per_iteration
+        self.sigma_floor = sigma_floor
         # Metrics from last step() call --> read by thesis experiment runner.
         # Keys populated by all modes: n_inner_samples, alpha, grad_norm, sigma2.
         # Additional keys by mode: p_wolfe (prob_wolfe), wolfe_satisfied +
@@ -833,26 +835,54 @@ class BayesianGradientAscent(AbstractOptimizer):
                     phi_0=phi_0,
                     phi_prime_0=phi_prime_0,
                 )
-                # Update center_alpha for next GI bound shift:
-                # clip to [0.5*l, l] so the box stays informative but not
-                # redundant with theta (see line-aligned sampling comment above).
-                _center_alpha = float(max(0.5 * _ls_val, min(alpha_candidate, _ls_val)))
+                # Update center_alpha for next GI bound shift.
+                # ============================================================
+                # THESIS EXTENSION — BEGIN
+                # Description: Änderung 3 — wider clipping range [0.1*l, alpha_max].
+                #   Lower bound 0.1*l (was 0.5*l): allows small steps early when
+                #   the line search returns conservative candidates.
+                #   Upper bound alpha_max_val (was l): consistent with the search
+                #   range so the GI box can follow the full step.
+                # --- PREVIOUS THESIS CODE ---
+                # _center_alpha = float(max(0.5 * _ls_val, min(alpha_candidate, _ls_val)))
+                # --- END PREVIOUS THESIS CODE ---
+                _center_alpha = float(max(0.1 * _ls_val, min(alpha_candidate, alpha_max_val)))
+                # ============================================================
+                # THESIS EXTENSION — END
+                # ============================================================
                 # ============================================================
                 # THESIS EXTENSION — END
                 # ============================================================
 
                 # 4. Compute p_Wolfe at alpha_candidate.
-                p_wolfe_val = compute_p_wolfe(
+                # ============================================================
+                # THESIS EXTENSION — BEGIN
+                # Description: Änderung 4+5 — pass sigma_floor; request
+                #   diagnostics when verbose for richer logging.
+                # ============================================================
+                _diag = compute_p_wolfe(
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
                     c1=self.c1, c2=self.c2,
+                    sigma_floor=self.sigma_floor,
+                    return_diagnostics=self.verbose,
                 )
-
                 if self.verbose:
+                    p_wolfe_val, _C_aa, _C_bb, _h_a, _h_b = _diag
+                    _gi_disp = (new_x - self.params).norm().item()
                     print(
                         f"  Prob-Wolfe iter {i+1}: alpha={alpha_candidate:.4f}, "
-                        f"p_Wolfe={p_wolfe_val:.4f} (threshold={self.c_W})"
+                        f"p_Wolfe={p_wolfe_val:.4f} (thr={self.c_W}), "
+                        f"center_alpha={_center_alpha:.4f}, "
+                        f"GI_disp={_gi_disp:.4f}, "
+                        f"C_aa={_C_aa:.2e}, C_bb={_C_bb:.2e}, "
+                        f"h_a={_h_a:.3f}, h_b={_h_b:.3f}"
                     )
+                else:
+                    p_wolfe_val = _diag
+                # ============================================================
+                # THESIS EXTENSION — END
+                # ============================================================
 
                 if p_wolfe_val > self.c_W:
                     _wolfe_satisfied = True

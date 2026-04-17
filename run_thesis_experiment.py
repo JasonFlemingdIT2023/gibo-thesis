@@ -134,6 +134,7 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
         #   configs without these keys continue to work unchanged.
         # ============================================================
         alpha_max=cfg.get("alpha_max", None),
+        sigma_floor=cfg.get("sigma_floor", 0.1),
         # ============================================================
         # THESIS EXPERIMENT EXTENSION — END
         # ============================================================

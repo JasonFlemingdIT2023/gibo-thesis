@@ -45,6 +45,7 @@ alpha_max: null                 # null → dynamic: 2 * model lengthscale per ru
 c1: 0.05                        # Armijo constant
 c2: 0.5                         # curvature constant
 c_W: 0.3                        # Wolfe probability threshold (M&H default)
+sigma_floor: 0.1                # variance floor: min sigma as fraction of sqrt(outputscale)
 
 results_dir: experiments/thesis_experiments/results
 verbose: false

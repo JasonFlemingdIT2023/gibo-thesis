@@ -271,6 +271,7 @@ def compute_s_terms(
     theta: torch.Tensor,
     alpha: float,
     p: torch.Tensor,
+    sigma_floor: float = 0.0,
 ) -> Dict[str, torch.Tensor]:
     """Compute all cross-covariance terms for the probabilistic Wolfe conditions.
 
@@ -299,6 +300,10 @@ def compute_s_terms(
         theta: Current parameters, shape [1, D].
         alpha: Scalar step size candidate.
         p: Normalized search direction, shape [1, D].
+        sigma_floor: Minimum posterior std as a fraction of sqrt(outputscale).
+            Applied to diagonal S-terms (S11, S22, S33, S44) only — prevents
+            p_Wolfe collapsing to 1 near training data where variance → 0.
+            Default 0.0 (no floor, backward-compatible).
 
     Returns:
         Dictionary mapping 'S11', 'S12', ..., 'S34' to scalar tensors.
@@ -323,6 +328,27 @@ def compute_s_terms(
         _, var_d_a = model.posterior_derivative(xa)        # [D, D]
         var_d_a = var_d_a.squeeze()                        # [D, D]
         S44 = p_vec @ var_d_a @ p_vec                     # scalar
+
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Variance floor — prevents p_Wolfe trivially → 1
+        #   near training data where posterior variance collapses to ~0.
+        #   Floor is proportional to outputscale so it scales with the
+        #   GP signal magnitude. Only diagonal terms (S11, S22, S33, S44)
+        #   are floored; off-diagonal cross-covariances are left unchanged.
+        # ============================================================
+        if sigma_floor > 0.0:
+            outputscale = float(model.covar_module.outputscale.detach())
+            floor_var = (sigma_floor ** 2) * outputscale
+            ls_mean = model.covar_module.base_kernel.lengthscale.mean().item()
+            floor_grad_var = floor_var / (ls_mean ** 2)
+            S11 = S11.clamp(min=floor_var)
+            S33 = S33.clamp(min=floor_var)
+            S22 = S22.clamp(min=floor_grad_var)
+            S44 = S44.clamp(min=floor_grad_var)
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
 
         # --Cross-covariances between function values
 

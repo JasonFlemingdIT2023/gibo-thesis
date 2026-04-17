@@ -160,7 +160,9 @@ def compute_p_wolfe(
     phi_prime_0: torch.Tensor = None,
     c1: float = 0.05,
     c2: float = 0.5,
-) -> float:
+    sigma_floor: float = 0.0,
+    return_diagnostics: bool = False,
+):
     """Compute p_Wolfe(alpha) = P(W-I holds AND W-II holds | GP posterior).
 
     The four quantities [f(theta), f'(theta)*p, f(theta+alpha*p), f'(theta+alpha*p)*p]
@@ -186,9 +188,13 @@ def compute_p_wolfe(
         phi_prime_0: Pre-computed p^T mean_d(theta) — same.
         c1: Armijo constant (default 0.05).
         c2: Curvature constant (default 0.5).
+        sigma_floor: Variance floor fraction passed to compute_s_terms.
+        return_diagnostics: If True, return (p_wolfe, C_aa, C_bb, h_a, h_b)
+            instead of just p_wolfe. Useful for verbose logging.
 
     Returns:
-        p_Wolfe in [0, 1] as float.
+        p_Wolfe in [0, 1] as float, or (p_wolfe, C_aa, C_bb, h_a, h_b) if
+        return_diagnostics=True.
     """
     # --Baseline values at alpha=0 (cached if provided) 
     if phi_0 is None or phi_prime_0 is None:
@@ -197,8 +203,8 @@ def compute_p_wolfe(
     # --Values at alpha 
     phi_a, phi_prime_a, _ = eval_phi(model, theta, alpha, p)
 
-    # --All 10 cross-covariance terms 
-    s = compute_s_terms(model, theta, alpha, p)
+    # --All 10 cross-covariance terms
+    s = compute_s_terms(model, theta, alpha, p, sigma_floor=sigma_floor)
 
     # --Means of a_t (Armijo) and b_t (curvature) 
     #m_a = phi(alpha) - phi(0) - c1*alpha*phi'(0)
@@ -250,6 +256,8 @@ def compute_p_wolfe(
 
     # Guard against empty integration interval
     if upb <= h_b:
+        if return_diagnostics:
+            return 0.0, float(C_aa.item()), float(C_bb.item()), float(h_a), float(h_b)
         return 0.0
     '''
      Bivariate normal probability 
@@ -273,7 +281,10 @@ def compute_p_wolfe(
         + mvn.cdf([h_a, h_b])
     )
 
-    return float(max(0.0, p_wolfe))
+    p_wolfe_val = float(max(0.0, p_wolfe))
+    if return_diagnostics:
+        return p_wolfe_val, float(C_aa.item()), float(C_bb.item()), float(h_a), float(h_b)
+    return p_wolfe_val
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +301,7 @@ def check_prob_wolfe(
     c1: float = 0.05,
     c2: float = 0.5,
     c_W: float = 0.3,
+    sigma_floor: float = 0.0,
 ) -> Tuple[bool, float, float]:
     """Perform one probabilistic Wolfe check for the current GP state.
 
@@ -305,6 +317,7 @@ def check_prob_wolfe(
         c1: Armijo constant.
         c2: Curvature constant.
         c_W: Wolfe probability threshold for termination.
+        sigma_floor: Variance floor fraction passed to compute_s_terms.
 
     Returns:
         wolfe_satisfied: True if p_Wolfe(alpha_candidate) > c_W.
@@ -320,6 +333,7 @@ def check_prob_wolfe(
         model, theta, alpha_candidate, p,
         phi_0=phi_0, phi_prime_0=phi_prime_0,
         c1=c1, c2=c2,
+        sigma_floor=sigma_floor,
     )
     wolfe_satisfied = p_wolfe_value > c_W
     return wolfe_satisfied, alpha_candidate, p_wolfe_value
