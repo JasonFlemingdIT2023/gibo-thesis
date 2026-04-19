@@ -1031,7 +1031,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 # Description: Posterior-variance gate.
                 #   Only accept Wolfe if the GP has resolved >= 50% of its
                 #   prior uncertainty at the step point. This blocks blind
-                #   jumps to alpha_max where sigma2 ~ outputscale (no data).
+                #   jumps to alpha_max where sigma2 = ca. outputscale (no data).
                 #   Threshold 0.5 * outputscale is scale-relative and
                 #   dimension-independent. Forces the inner loop to collect
                 #   GI samples near alpha* before trusting Wolfe.
