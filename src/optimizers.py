@@ -17,7 +17,7 @@ from src.model import ExactGPSEModel, DerivativeExactGPSEModel
 # THESIS EXTENSION — BEGIN
 # Description: Imports for adaptive inner loop termination variants
 # ============================================================
-from src.line_search.utils import get_search_direction, eval_phi_0
+from src.line_search.utils import get_search_direction, eval_phi_0, eval_phi
 from src.line_search.prob_wolfe import find_alpha_star, compute_p_wolfe
 from src.line_search.det_ei import find_alpha_star_ei, check_det_wolfe
 # ============================================================
@@ -939,12 +939,42 @@ class BayesianGradientAscent(AbstractOptimizer):
             # ============================================================
             alpha_candidate = alpha_max_val
             _wolfe_satisfied = False
-            armijo_ok = False             # default if loop never runs
+            armijo_ok = False             #default if loop never runs
             curvature_ok = False
+            gp_informed = False           #default if loop never runs-->variance guard
             _n_inner = 0
+            # ============================================================
+            # THESIS EXTENSION — BEGIN
+            # Description: GI-Shift state (mirrors prob_wolfe block).
+            #   _ls_val: mean lengthscale for clipping center_alpha.
+            #   _center_alpha: None for sample 1 (p unknown), then tracks
+            #   where along p the GI box is centred.
+            # ============================================================
+            _ls_val = self.model.covar_module.base_kernel.lengthscale.mean().item()
+            _center_alpha = None
+            # ============================================================
+            # THESIS EXTENSION — END
+            # ============================================================
 
             for i in range(self.max_samples_per_iteration):
                 # 1. Real function evaluation via GI acquisition function.
+                # ============================================================
+                # THESIS EXTENSION — BEGIN
+                # Description: Shift GI bounds along p from sample 2 onward.
+                #   Sample 1: standard bounds around theta (p unknown).
+                #   Sample 2+: bounds centred at theta + _center_alpha * p.
+                #   Mirrors prob_wolfe block so the GP posterior gets data
+                #   in the region where EI/Wolfe operate.
+                # ============================================================
+                if _center_alpha is not None and self.update_bounds and p_direction is not None:
+                    _box_center = self.params + _center_alpha * p_direction
+                    _delta_t = float(self.delta) if self.delta is not None else 0.2
+                    self.bounds = torch.tensor(
+                        [[-_delta_t], [_delta_t]], dtype=self.params.dtype
+                    ) + _box_center
+                # ============================================================
+                # THESIS EXTENSION — END
+                # ============================================================
                 new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
                 new_y = self.objective(new_x)
 
@@ -979,22 +1009,52 @@ class BayesianGradientAscent(AbstractOptimizer):
                 alpha_candidate = find_alpha_star_ei(
                     self.model, self.params, p_direction, eta=eta, delta=alpha_max_val
                 )
+                # ============================================================
+                # THESIS EXTENSION — BEGIN
+                # Description: Update center_alpha for next GI bound shift.
+                #   Clipped to [0.1*l, alpha_max] so the box stays in the
+                #   informative region of the SE kernel (mirrors prob_wolfe).
+                # ============================================================
+                _center_alpha = float(max(0.1 * _ls_val, min(alpha_candidate, alpha_max_val)))
+                # ============================================================
+                # THESIS EXTENSION — END
+                # ============================================================
 
-                # 4 Check strong Wolfe conditions deterministically on mu_post.
+                # 4. Check strong Wolfe conditions deterministically on mu_post.
                 armijo_ok, curvature_ok = check_det_wolfe(
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
                     c1=self.c1, c2=self.c2,
                 )
+                # ============================================================
+                # THESIS EXTENSION — BEGIN
+                # Description: Posterior-variance gate.
+                #   Only accept Wolfe if the GP has resolved >= 50% of its
+                #   prior uncertainty at the step point. This blocks blind
+                #   jumps to alpha_max where sigma2 ~ outputscale (no data).
+                #   Threshold 0.5 * outputscale is scale-relative and
+                #   dimension-independent. Forces the inner loop to collect
+                #   GI samples near alpha* before trusting Wolfe.
+                # ============================================================
+                _, _, sigma2_at_alpha = eval_phi(
+                    self.model, self.params, alpha_candidate, p_direction
+                )
+                outputscale = self.model.covar_module.outputscale.detach().item()
+                gp_informed = sigma2_at_alpha.item() < 0.5 * outputscale
+                # ============================================================
+                # THESIS EXTENSION — END
+                # ============================================================
 
                 if self.verbose:
                     print(
                         f"  Det-EI iter {i+1}: alpha={alpha_candidate:.4f}, "
                         f"Armijo={'OK' if armijo_ok else 'NO'}, "
-                        f"Curvature={'OK' if curvature_ok else 'NO'}"
+                        f"Curvature={'OK' if curvature_ok else 'NO'}, "
+                        f"GP={'YES' if gp_informed else 'NO'} "
+                        f"(σ²={sigma2_at_alpha.item():.4f}/σ_f²={outputscale:.4f})"
                     )
 
-                if armijo_ok and curvature_ok:
+                if armijo_ok and curvature_ok and gp_informed:
                     _wolfe_satisfied = True
                     if self.verbose:
                         print(
@@ -1091,6 +1151,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 'wolfe_satisfied': _wolfe_satisfied,
                 'armijo_ok': armijo_ok,
                 'curvature_ok': curvature_ok,
+                'gp_informed': gp_informed,
                 'grad_norm': _grad_norm,
                 'sigma2': _sigma2,
             }
