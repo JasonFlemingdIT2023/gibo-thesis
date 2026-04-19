@@ -29,7 +29,7 @@ import torch
 # ---------------------------------------------------------------------------
 
 def _get_K_x1_x2(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
-    """k(x1, x2) — prior kernel value, shape [1, 1].
+    """k(x1, x2) --> prior kernel value, shape [1, 1].
 
     Args:
         model: DerivativeExactGPSEModel.
@@ -43,7 +43,7 @@ def _get_K_x1_x2(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
 
 
 def _get_K_x_X(model, x: torch.Tensor) -> torch.Tensor:
-    """k(x, X_train) — prior kernel between x and all training points, shape [1, N].
+    """k(x, X_train) --> prior kernel between x and all training points, shape [1, N].
 
     Args:
         model: DerivativeExactGPSEModel.
@@ -59,7 +59,7 @@ def _get_K_x_X(model, x: torch.Tensor) -> torch.Tensor:
 def _get_lengthscale_sq(model) -> torch.Tensor:
     """Squared ARD lengthscales, shape [D].
 
-    For non-ARD (single lengthscale) this still works via broadcasting.
+    For non-ARD (single lengthscale) still works via broadcasting.
     """
     return model.covar_module.base_kernel.lengthscale.detach().squeeze() ** 2
 
@@ -68,40 +68,39 @@ def _get_dk_dx2(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
     """Analytic derivative of k(x1, x2) w.r.t. x2, shape [D].
 
     For the SE kernel:
-        d k(x1, x2) / d x2_d = k(x1, x2) * (x1_d - x2_d) / l_d^2
+        d k(x1, x2) /d x2_d = k(x1, x2) * (x1_d - x2_d) / l_d^2
 
     Args:
-        model: DerivativeExactGPSEModel.
+        model: DerivativeExactGPSEModel
         x1: Shape [1, D].
         x2: Shape [1, D].
 
     Returns:
-        Gradient of k w.r.t. x2, shape [D].
+        Gradient of k w.r.t x2, shape [D].
     """
-    k = _get_K_x1_x2(model, x1, x2).squeeze()          # scalar
-    l2 = _get_lengthscale_sq(model)                      # [D]
-    diff = (x1 - x2).squeeze()                           # [D]
-    return k * diff / l2                                  # [D]
+    k = _get_K_x1_x2(model, x1, x2).squeeze()         
+    l2 = _get_lengthscale_sq(model)                     
+    diff = (x1 - x2).squeeze()                          
+    return k * diff / l2                                 
 
 
 def _get_dk_dx1(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
     """Analytic derivative of k(x1, x2) w.r.t. x1, shape [D].
 
     For the SE kernel:
-        d k(x1, x2) / d x1_d = -k(x1, x2) * (x1_d - x2_d) / l_d^2
+        d k(x1, x2) /d x1_d = -k(x1, x2) * (x1_d - x2_d) / l_d^2
                                = -d k(x1, x2) / d x2_d
 
     This sign follows from d/dx1_d of exp(-(x1_d-x2_d)^2 / 2l^2).
     """
-    return -_get_dk_dx2(model, x1, x2)                   # [D]
+    return -_get_dk_dx2(model, x1, x2)                  
 
 
 def _get_d2k_dx1dx2(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
     """Analytic mixed second derivative of k(x1, x2) w.r.t. x1 and x2, shape [D, D].
 
     For the SE kernel:
-        d^2 k / (d x1_d  d x2_e) = k(x1,x2) * (delta_{de}/l_d^2
-                                    - (x1_d-x2_d)*(x1_e-x2_e) / (l_d^2 * l_e^2))
+        d^2 k /(d x1_d  d x2_e) = k(x1,x2) * (delta_{de}/l_d^2 - (x1_d-x2_d)*(x1_e-x2_e) / (l_d^2 * l_e^2))
 
     In matrix form:
         d^2 k / (d x1  d x2^T) = k(x1,x2) * (diag(1/l^2) - outer(diff/l^2, diff/l^2))
@@ -117,15 +116,15 @@ def _get_d2k_dx1dx2(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
     Returns:
         Mixed Hessian of k, shape [D, D].
     """
-    k = _get_K_x1_x2(model, x1, x2).squeeze()           # scalar
-    l2 = _get_lengthscale_sq(model)                      # [D]
-    diff = (x1 - x2).squeeze()                           # [D]
-    diff_over_l2 = diff / l2                             # [D]
-    return k * (torch.diag(1.0 / l2) - torch.outer(diff_over_l2, diff_over_l2))  # [D, D]
+    k = _get_K_x1_x2(model, x1, x2).squeeze()           
+    l2 = _get_lengthscale_sq(model)                     
+    diff = (x1 - x2).squeeze()                          
+    diff_over_l2 = diff / l2                             
+    return k * (torch.diag(1.0 / l2) - torch.outer(diff_over_l2, diff_over_l2))  #[D, D]
 
 
 # ---------------------------------------------------------------------------
-# Posterior covariance and its analytic derivatives
+# Posterior covariance and analytic derivatives
 # ---------------------------------------------------------------------------
 
 def posterior_cov(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
@@ -134,7 +133,7 @@ def posterior_cov(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
     k_post(x1, x2) = k(x1, x2) - k(x1, X) @ K_inv @ k(X, x2)
 
     At x1 = x2 this equals sigma2_post(x1), the posterior variance
-    of the latent function (no observation noise).
+    of the latent function.
 
     Args:
         model: DerivativeExactGPSEModel (prediction_strategy must be initialized).
@@ -144,11 +143,11 @@ def posterior_cov(model, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
     Returns:
         Scalar posterior covariance.
     """
-    K_inv = model.get_KXX_inv()                          # [N, N]
-    k_x1_X = _get_K_x_X(model, x1)                      # [1, N]
-    k_X_x2 = _get_K_x_X(model, x2).T                    # [N, 1]
-    k_prior = _get_K_x1_x2(model, x1, x2)               # [1, 1]
-    return (k_prior - k_x1_X @ K_inv @ k_X_x2).squeeze()  # scalar
+    K_inv = model.get_KXX_inv()                          
+    k_x1_X = _get_K_x_X(model, x1)                      
+    k_X_x2 = _get_K_x_X(model, x2).T                    
+    k_prior = _get_K_x1_x2(model, x1, x2)               
+    return (k_prior - k_x1_X @ K_inv @ k_X_x2).squeeze()  #scalar
 
 
 def posterior_dcov_dx2(
@@ -176,17 +175,17 @@ def posterior_dcov_dx2(
     Returns:
         Gradient of posterior covariance w.r.t. x2, shape [D].
     """
-    K_inv = model.get_KXX_inv()                          # [N, N]
-    k_x1_X = _get_K_x_X(model, x1)                      # [1, N]
-    dk_prior = _get_dk_dx2(model, x1, x2)                # [D]
+    K_inv = model.get_KXX_inv()                         
+    k_x1_X = _get_K_x_X(model, x1)                      
+    dk_prior = _get_dk_dx2(model, x1, x2)              
 
-    # d k(X, x2) / d x2: shape [N, D]
-    dk_X_x2 = model._get_KxX_dx(x2).squeeze(0).T        # [N, D]
+    #d k(X, x2) / d x2: shape [N, D]
+    dk_X_x2 = model._get_KxX_dx(x2).squeeze(0).T        
 
-    # alpha = k(x1, X) @ K_inv: shape [1, N]
-    alpha_vec = k_x1_X @ K_inv                           # [1, N]
+    # alpha = k(x1, X) @ K_inv shape [1, N]
+    alpha_vec = k_x1_X @ K_inv                           
 
-    return dk_prior - (alpha_vec @ dk_X_x2).squeeze(0)   # [D]
+    return dk_prior - (alpha_vec @ dk_X_x2).squeeze(0)  
 
 
 def posterior_dcov_dx1(
@@ -214,14 +213,14 @@ def posterior_dcov_dx1(
     Returns:
         Gradient of posterior covariance w.r.t. x1, shape [D].
     """
-    K_inv = model.get_KXX_inv()                          # [N, N]
-    k_X_x2 = _get_K_x_X(model, x2).T                    # [N, 1]
-    dk_prior = _get_dk_dx1(model, x1, x2)                # [D]
+    K_inv = model.get_KXX_inv()                         
+    k_X_x2 = _get_K_x_X(model, x2).T                    
+    dk_prior = _get_dk_dx1(model, x1, x2)                
 
-    # d k(x1, X) / d x1: shape [D, N]
-    dk_x1_X = model._get_KxX_dx(x1).squeeze(0)          # [D, N]
+    # d k(x1, X) /d x1 shape [D, N]
+    dk_x1_X = model._get_KxX_dx(x1).squeeze(0)          
 
-    return dk_prior - (dk_x1_X @ K_inv @ k_X_x2).squeeze()  # [D]
+    return dk_prior - (dk_x1_X @ K_inv @ k_X_x2).squeeze()  
 
 
 def posterior_d2cov_dx1dx2(
@@ -250,16 +249,16 @@ def posterior_d2cov_dx1dx2(
     Returns:
         Mixed Hessian of posterior covariance, shape [D, D].
     """
-    K_inv = model.get_KXX_inv()                          # [N, N]
-    d2k_prior = _get_d2k_dx1dx2(model, x1, x2)          # [D, D]
+    K_inv = model.get_KXX_inv()                        
+    d2k_prior = _get_d2k_dx1dx2(model, x1, x2)          
 
     # d k(x1, X) / d x1: shape [D, N]
-    dk_x1_X = model._get_KxX_dx(x1).squeeze(0)          # [D, N]
+    dk_x1_X = model._get_KxX_dx(x1).squeeze(0)         
 
     # d k(X, x2) / d x2: shape [N, D]
-    dk_X_x2 = model._get_KxX_dx(x2).squeeze(0).T        # [N, D]
+    dk_X_x2 = model._get_KxX_dx(x2).squeeze(0).T        
 
-    return d2k_prior - dk_x1_X @ K_inv @ dk_X_x2        # [D, D]
+    return d2k_prior - dk_x1_X @ K_inv @ dk_X_x2        
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +275,7 @@ def compute_s_terms(
     """Compute all cross-covariance terms for the probabilistic Wolfe conditions.
 
     The joint GP distribution of z = [f0, f0', fa, fa'] is characterized by
-    these 10 scalar covariance entries:
+   scalar covariance entries:
 
         S11 = Var(f(theta))                    = sigma2_post(theta)
         S22 = Var(p^T grad f(theta))           = p^T variance_d(theta) p
@@ -301,38 +300,38 @@ def compute_s_terms(
         alpha: Scalar step size candidate.
         p: Normalized search direction, shape [1, D].
         sigma_floor: Minimum posterior std as a fraction of sqrt(outputscale).
-            Applied to diagonal S-terms (S11, S22, S33, S44) only — prevents
+            Applied to diagonal S-terms (S11, S22, S33, S44) only --> prevents
             p_Wolfe collapsing to 1 near training data where variance → 0.
             Default 0.0 (no floor, backward-compatible).
+            -->Turned out as failure and design choice to simulate circumstances of Henning Paper
 
     Returns:
         Dictionary mapping 'S11', 'S12', ..., 'S34' to scalar tensors.
     """
-    x0 = theta                                   # [1, D]
-    xa = theta + alpha * p                       # [1, D]
-    p_vec = p.squeeze()                          # [D]
+    x0 = theta                                   
+    xa = theta + alpha * p                       
+    p_vec = p.squeeze()                          
 
-    with torch.no_grad():
-        # --Diagonal variances 
+    with torch.no_grad(): 
 
         #S11, S33: posterior variance (latent, no noise) at theta and theta+alpha*p
-        S11 = model.posterior(x0).mvn.variance.squeeze()   # scalar
-        S33 = model.posterior(xa).mvn.variance.squeeze()   #scalar
+        S11 = model.posterior(x0).mvn.variance.squeeze()   
+        S33 = model.posterior(xa).mvn.variance.squeeze()  
 
-        # S22: posterior gradient variance projected onto p at theta
-        _, var_d_0 = model.posterior_derivative(x0)        # [1, D, D] or [D, D]
-        var_d_0 = var_d_0.squeeze()                        # [D, D]
-        S22 = p_vec @ var_d_0 @ p_vec                     # scalar
+        #S22: posterior gradient variance projected onto p at theta
+        _, var_d_0 = model.posterior_derivative(x0)        
+        var_d_0 = var_d_0.squeeze()                        
+        S22 = p_vec @ var_d_0 @ p_vec                   
 
-        # S44: posterior gradient variance projected onto p at theta+alpha*p
-        _, var_d_a = model.posterior_derivative(xa)        # [D, D]
-        var_d_a = var_d_a.squeeze()                        # [D, D]
-        S44 = p_vec @ var_d_a @ p_vec                     # scalar
+        #S44: posterior gradient variance projected onto p at theta+alpha*p
+        _, var_d_a = model.posterior_derivative(xa)        
+        var_d_a = var_d_a.squeeze()                       
+        S44 = p_vec @ var_d_a @ p_vec                     
 
         # ============================================================
-        # THESIS EXTENSION — BEGIN
-        # Description: Variance floor — prevents p_Wolfe trivially → 1
-        #   near training data where posterior variance collapses to ~0.
+        # THESIS EXPERIMENT EXTENSION — BEGIN
+        # Description: Variance floor --> prevents p_Wolfe trivially → 1
+        #  near training data where posterior variance collapses to ca. 0.
         #   Floor is proportional to outputscale so it scales with the
         #   GP signal magnitude. Only diagonal terms (S11, S22, S33, S44)
         #   are floored; off-diagonal cross-covariances are left unchanged.
@@ -347,39 +346,35 @@ def compute_s_terms(
             S22 = S22.clamp(min=floor_grad_var)
             S44 = S44.clamp(min=floor_grad_var)
         # ============================================================
-        # THESIS EXTENSION — END
+        # THESIS EXPERIMENT EXTENSION — END
         # ============================================================
 
-        # --Cross-covariances between function values
 
         # S13: Cov(f(theta), f(theta+alpha*p))
-        S13 = posterior_cov(model, x0, xa)                 # scalar
-
-        # --Cross-covariances between function value and gradient 
+        S13 = posterior_cov(model, x0, xa)              
 
         # S12: Cov(f(theta), f'(theta) along p)
         # = p^T d k_post(theta, theta) / d theta'
-        S12 = p_vec @ posterior_dcov_dx2(model, x0, x0)   # scalar
+        S12 = p_vec @ posterior_dcov_dx2(model, x0, x0)   
 
         # S14: Cov(f(theta), f'(theta+alpha*p) along p)
         # = p^T d k_post(theta, theta+alpha*p) / d (theta+alpha*p)
-        S14 = p_vec @ posterior_dcov_dx2(model, x0, xa)   # scalar
+        S14 = p_vec @ posterior_dcov_dx2(model, x0, xa)   
 
         # S23: Cov(f'(theta) along p, f(theta+alpha*p))
         # = p^T d k_post(theta+alpha*p, theta) / d theta   
         # = p^T d k_post(theta, theta+alpha*p) / d theta   [equiv. by symmetry]
-        S23 = p_vec @ posterior_dcov_dx2(model, xa, x0)   # scalar
+        S23 = p_vec @ posterior_dcov_dx2(model, xa, x0)   
 
         # S34: Cov(f(theta+alpha*p), f'(theta+alpha*p) along p)
         # = p^T d k_post(theta+alpha*p, theta+alpha*p) / d (theta+alpha*p)'
-        S34 = p_vec @ posterior_dcov_dx2(model, xa, xa)   # scalar
-
-        # - Cross-covariance between gradients 
+        S34 = p_vec @ posterior_dcov_dx2(model, xa, xa)   
+ 
 
         # S24: Cov(f'(theta) along p, f'(theta+alpha*p) along p)
         # = p^T d^2 k_post(theta, theta+alpha*p)/(d theta d (theta+alpha*p)^T) p
-        d2cov = posterior_d2cov_dx1dx2(model, x0, xa)     # [D, D]
-        S24 = p_vec @ d2cov @ p_vec                       # scalar
+        d2cov = posterior_d2cov_dx1dx2(model, x0, xa)     
+        S24 = p_vec @ d2cov @ p_vec                       
 
     return {
         'S11': S11, 'S22': S22, 'S33': S33, 'S44': S44,
@@ -412,13 +407,13 @@ def get_search_direction(
         mean_d: Raw (unnormalized) posterior gradient mean, shape [1, D].
     """
     with torch.no_grad():
-        mean_d, _ = model.posterior_derivative(theta)   # [1, D]
+        mean_d, _ = model.posterior_derivative(theta)  
         norm = mean_d.norm()
         if norm < 1e-10:
             # Degenerate: gradient is essentially zero -->no meaningful direction
             p = torch.zeros_like(mean_d)
         else:
-            p = mean_d / norm                           # [1, D]
+            p = mean_d / norm                          
     return p, mean_d
 
 
@@ -445,14 +440,14 @@ def eval_phi(
         sigma2:    sigma2_post(theta + alpha*p), scalar tensor.
     """
     with torch.no_grad():
-        x_new = theta + alpha * p                              # [1, D]
+        x_new = theta + alpha * p                         
 
         posterior = model.posterior(x_new)
-        phi = posterior.mvn.mean.squeeze()                     #scalar
-        sigma2 = posterior.mvn.variance.squeeze()              # scalar
+        phi = posterior.mvn.mean.squeeze()                     
+        sigma2 = posterior.mvn.variance.squeeze()             
 
-        mean_d, _ = model.posterior_derivative(x_new)          # [1, D]
-        phi_prime = (p * mean_d).sum()                         # scalar
+        mean_d, _ = model.posterior_derivative(x_new)          
+        phi_prime = (p * mean_d).sum()                         
 
     return phi, phi_prime, sigma2
 
@@ -465,7 +460,7 @@ def eval_phi_0(
     """Evaluate phi and phi' at alpha = 0 (i.e., at theta itself).
 
     Equivalent to eval_phi(model, theta, 0.0, p) but named separately
-    for clarity — callers often need to cache this baseline value.
+    for clarity --> callers often need to cache this baseline value.
 
     Returns:
         phi_0:       mu_post(theta), scalar tensor.

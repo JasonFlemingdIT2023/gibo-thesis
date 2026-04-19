@@ -5,7 +5,7 @@ Identical logic to run_thesis_experiment.py, but runs all (dim, run) jobs
 in parallel using multiprocessing.Pool.
 
 Key detail: each worker calls torch.set_num_threads(1) to prevent PyTorch's
-internal OpenMP/MKL from spawning its own threads — otherwise n_workers *
+internal OpenMP/MKL from spawning its own threads --> otherwise n_workers *
 n_cpu_threads compete for the same cores and performance degrades.
 
 Usage:
@@ -107,9 +107,9 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    # Load pre-generated data once in the main process.
-    # Workers receive tensors via pickle — acceptable since tensors are small
-    # (1000 points x dim) compared to the per-run compute cost.
+    #Load pre-generated data once in the main process.
+    #Workers receive tensors via pickle --> acceptable since tensors are small
+    #(1000 points x dim) compared to the per-run compute cost.
     data_dir = args.data_dir
     train_x_dict      = torch.load(os.path.join(data_dir, "train_x.pt"))
     train_y_dict      = torch.load(os.path.join(data_dir, "train_y.pt"))

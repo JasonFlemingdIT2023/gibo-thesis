@@ -3,23 +3,23 @@ Variant A: Probabilistic Wolfe Conditions for inner loop termination.
 
 Design:
     alpha_candidate = argmax_{alpha in (0, 2*l]} mu_post(theta + alpha*p)
-    Stop inner loop when p_Wolfe(alpha_candidate) > c_W.
+    Stop inner loop when p_Wolfe(alpha_candidate) > c_W. (Problematic)
 
 Step size method: direct argmax of the GP posterior mean along p, bounded
 to [0, 2*l] where l is the model lengthscale. This is principled because
-GI sampling is line-aligned (samples are collected in a box centred along
+GI sampling is now line-aligned (samples are collected in a box centred along
 p, see prob_wolfe inner loop in optimizers.py), so the GP posterior is
-calibrated along the search line — not just within +-delta around theta.
+calibrated along the search line --> not just within +-delta around theta. (Problematic, overshooting and self trusting)
 
 Previous version used cubic Hermite extrapolation as a workaround for the
 GP being uninformed beyond delta=0.2 around theta. With line-aligned GI
 sampling the posterior is informed along the line, making direct argmax
-the correct and simpler choice. Cubic extrapolation into uninformed regions
+the correct and simpler choice. (In theory) Cubic extrapolation into uninformed regions
 was replaced because it represented polynomial fantasy rather than
-GP-grounded prediction.
+GP-grounded prediction. 
 
 alpha_max = 2*l bound: at distance 2*l the SE prior correlation is
-exp(-2) ~ 13.5% — the GP is essentially extrapolating beyond that point.
+exp(-2) ~ 13.5% ---> the GP is essentially extrapolating beyond that point.
 This provides a principled upper bound (Rasmussen & Williams, 2006, Ch. 4).
 
 Guard: if phi'(0) <= 0, falls back to lr * l (gradient direction not
@@ -71,24 +71,18 @@ def find_alpha_star(
     """Find alpha* = argmax_{alpha in (0, alpha_max]} mu_post(theta + alpha*p).
 
     Uses scipy.optimize.minimize_scalar (Brent, bounded) on -phi(alpha).
-    All evaluations are analytical GP posterior calls — no real rollouts.
 
     This is principled because GI sampling is line-aligned: the optimizer
     shifts the GI acquisition bounds to be centred along p (see prob_wolfe
     inner loop in optimizers.py), so the GP posterior is calibrated along
     the entire search line up to alpha_max = 2*l.
 
-    Previous version (cubic Hermite): used polynomial extrapolation to
-    work around the GP being uninformed beyond delta=0.2. With line-aligned
-    GI sampling the posterior is informed along the line, making direct
-    argmax the correct choice (no extrapolation needed).
-
     alpha_max = 2*l: SE correlation at distance 2*l is exp(-2) ~ 13.5%,
     so the GP is essentially blind beyond that (Rasmussen & Williams 2006).
 
     Guard: if phi'(0) <= 0, returns lr * l as fallback (dimensionally
     consistent with baseline step lr * l along normalised gradient).
-    The optimizer guard fires first; this is defensive for standalone use.
+    The optimizer guard fires first--> defensive for standalone use.
 
     Args:
         model: DerivativeExactGPSEModel with current training data.
@@ -96,8 +90,8 @@ def find_alpha_star(
         p: Normalized search direction, shape [1, D].
         delta: alpha_max (upper clamp). Optimizer passes 2*l explicitly.
                If None (unit tests / check_prob_wolfe), computed from model.
-        phi_0: Pre-computed mu_post(theta) — avoids redundant GP call.
-        phi_prime_0: Pre-computed p^T mean_d(theta) — same.
+        phi_0: Pre-computed mu_post(theta) --> avoids redundant GP call.
+        phi_prime_0: Pre-computed p^T mean_d(theta) 
         lr_fallback: Base lr for fallback step; actual return is lr_fallback*l.
 
     Returns:
@@ -108,7 +102,7 @@ def find_alpha_star(
     # Description: Phase 1 — argmax mu_post on calibrated posterior.
     #   Phase 3 replaces cubic Hermite (which was a workaround for
     #   uninformed GP posterior). Now that GI sampling is line-aligned
-    #   (Änderung 1 / Phase 2), the posterior along p is calibrated and
+    #  the posterior along p is calibrated and
     #   direct argmax is the honest, principled choice.
     # --- PREVIOUS THESIS CODE (cubic Hermite, replaced by Phase 1/3) ---
     # spline = CubicHermiteSpline(x=[0, probe], y=[phi_0, phi_probe],
@@ -124,7 +118,7 @@ def find_alpha_star(
     else:
         alpha_max = float(delta)
 
-    # 2. Guard: direction not ascending → dimensionally consistent fallback
+    #2. Guard: direction not ascending → dimensionally consistent fallback
     if phi_prime_0 is not None and float(phi_prime_0) <= 0.0:
         ls = model.covar_module.base_kernel.lengthscale.mean().item()
         return lr_fallback * ls
@@ -140,9 +134,6 @@ def find_alpha_star(
         method='bounded',
         options={'xatol': 1e-5, 'maxiter': 500},
     )
-    # ============================================================
-    # THESIS EXTENSION — END
-    # ============================================================
 
     return float(result.x)
 
@@ -184,8 +175,8 @@ def compute_p_wolfe(
         theta: Current parameters, shape [1, D].
         alpha: Step size candidate (scalar float).
         p: Normalized search direction, shape [1, D].
-        phi_0: Pre-computed mu_post(theta) — avoids redundant call if cached.
-        phi_prime_0: Pre-computed p^T mean_d(theta) — same.
+        phi_0: Pre-computed mu_post(theta) --> avoids redundant call if cached.
+        phi_prime_0: Pre-computed p^T mean_d(theta) 
         c1: Armijo constant (default 0.05).
         c2: Curvature constant (default 0.5).
         sigma_floor: Variance floor fraction passed to compute_s_terms.
@@ -196,23 +187,23 @@ def compute_p_wolfe(
         p_Wolfe in [0, 1] as float, or (p_wolfe, C_aa, C_bb, h_a, h_b) if
         return_diagnostics=True.
     """
-    # --Baseline values at alpha=0 (cached if provided) 
+    # Baseline values at alpha=0 (cached if provided) 
     if phi_0 is None or phi_prime_0 is None:
         phi_0, phi_prime_0, _ = eval_phi_0(model, theta, p)
 
-    # --Values at alpha 
+    #Values at alpha 
     phi_a, phi_prime_a, _ = eval_phi(model, theta, alpha, p)
 
-    # --All 10 cross-covariance terms
+    # All 10 cross-covariance terms
     s = compute_s_terms(model, theta, alpha, p, sigma_floor=sigma_floor)
 
-    # --Means of a_t (Armijo) and b_t (curvature) 
+    # Means of a_t (Armijo) and b_t (curvature) 
     #m_a = phi(alpha) - phi(0) - c1*alpha*phi'(0)
     #m_b = c2*phi'(0) - phi'(alpha)
     m_a = phi_a - phi_0 - c1 * alpha * phi_prime_0
     m_b = c2 * phi_prime_0 - phi_prime_a
 
-    # --Variances and cross-covariance 
+    #Variances and cross-covariance 
     #C_aa = Var(a_t), C_bb = Var(b_t), C_ab = Cov(a_t, b_t)
     C_aa = (
         s['S11'] + s['S33'] - 2 * s['S13']
@@ -231,13 +222,13 @@ def compute_p_wolfe(
         - s['S34']
     )
 
-    # --Numerical stability
+    #Numerical stability
     C_aa = C_aa.clamp(min=1e-10)
     C_bb = C_bb.clamp(min=1e-10)
     sqrt_Caa = C_aa.sqrt()
     sqrt_Cbb = C_bb.sqrt()
 
-    # --Correlation 
+    #Correlation 
     rho = (C_ab / (sqrt_Caa * sqrt_Cbb)).clamp(-1 + 1e-6, 1 - 1e-6)
     rho_val = rho.item()
 
@@ -247,14 +238,14 @@ def compute_p_wolfe(
     h_a = (-m_a / sqrt_Caa).item()
     h_b = (-m_b / sqrt_Cbb).item()
 
-    # Upper bound for curvature condition (strong, ~95% confidence):
+    # Upper bound for curvature condition (strong, ~95% confidence from paper):
     # b_bar = 2*c2*(phi'(0) + 2*sqrt(S22))
     #This captures the strong curvature condition |phi'(alpha)| <= c2*|phi'(0)|
     # accounting for uncertainty in the gradient at theta.
     b_bar = 2 * c2 * (phi_prime_0 + 2 * s['S22'].sqrt())
     upb = ((b_bar - m_b) / sqrt_Cbb).item()
 
-    # Guard against empty integration interval
+    #Guard against empty integration interval
     if upb <= h_b:
         if return_diagnostics:
             return 0.0, float(C_aa.item()), float(C_bb.item()), float(h_a), float(h_b)
@@ -311,8 +302,8 @@ def check_prob_wolfe(
         model: DerivativeExactGPSEModel (updated with latest GI sample).
         theta: Current parameters, shape [1, D].
         p: Normalized search direction (fixed for the inner loop), shape [1, D].
-        phi_0: Cached mu_post(theta) — computed once before inner loop.
-        phi_prime_0: Cached p^T mean_d(theta) — same.
+        phi_0: Cached mu_post(theta) --> computed once before inner loop.
+        phi_prime_0: Cached p^T mean_d(theta)
         delta: alpha_max. If None, uses 2 * lengthscale from model.
         c1: Armijo constant.
         c2: Curvature constant.

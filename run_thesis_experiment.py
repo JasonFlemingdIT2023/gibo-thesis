@@ -57,7 +57,7 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
     """Instantiate BayesianGradientAscent from thesis config dict."""
 
     # ============================================================
-    # THESIS EXTENSION — BEGIN
+    # THESIS EXTENSION - BEGIN
     # Description: Resolve YAML placeholder strings to concrete values,
     #              matching the original GIBO config.evaluate() behaviour.
     # ============================================================
@@ -70,7 +70,7 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
     else:
         max_samples = int(max_samples_raw)
     # ============================================================
-    # THESIS EXTENSION — END
+    # THESIS EXTENSION - END
     # ============================================================
 
     hypers = {
@@ -195,7 +195,7 @@ def run_single(cfg: dict, dim: int, seed: int,
             armijo_ok_trace.append(info.get("armijo_ok", None))
             curvature_ok_trace.append(info.get("curvature_ok", None))
 
-    # Simple regret at each iteration: f_max - best_so_far
+    # Simple regret at each iteration: f_max - best_so_far -->also regret not only reward
     best_so_far = float("-inf")
     regret_per_eval = []
     for params_t in f_values:

@@ -9,15 +9,6 @@ The EI acquisition selects the step size that balances expected improvement
 with posterior uncertainty. The Wolfe check is then evaluated deterministically
 on the posterior mean --> no probabilistic threshold.
 
-
-EI for maximization (reference eta = mu_post(theta)):
-    z(alpha)  = (mu_post(theta + alpha*p) - eta) / sigma_post(theta + alpha*p)
-    EI(alpha) = (mu_post(theta + alpha*p) - eta) * Phi(z) + sigma_post * phi_pdf(z)
-
-Wolfe conditions (deterministic, evaluated on mu_post):
-    Armijo:         phi(alpha) >= phi(0) + c1 * alpha * phi'(0)
-    Strong Curvature: |phi'(alpha)| <= c2 * |phi'(0)|
-
 Reference:
     Jones et al. (1998), Efficient Global Optimization of Expensive Black-Box
     Functions. Journal of Global Optimization.

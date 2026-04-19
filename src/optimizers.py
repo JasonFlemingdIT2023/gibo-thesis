@@ -545,7 +545,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         c2: float = 0.5,
         c_W: float = 0.3,
         alpha_max: Optional[float] = None, # other delta to not interfere GI trust region delta
-        min_samples_per_iteration: int = 1,# min samples for iteration as option
+        min_samples_per_iteration: int = 1,#min samples for iteration as option
         sigma_floor: float = 0.1,          # variance floor fraction (prob_wolfe only)
         # ============================================================
         # THESIS EXTENSION — END
@@ -625,7 +625,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         self.min_samples_per_iteration = min_samples_per_iteration
         self.sigma_floor = sigma_floor
         # Metrics from last step() call --> read by thesis experiment runner.
-        # Keys populated by all modes: n_inner_samples, alpha, grad_norm, sigma2.
+        # Keys  from all modes: n_inner_samples, alpha, grad_norm, sigma2.
         # Additional keys by mode: p_wolfe (prob_wolfe), wolfe_satisfied +
         # armijo_ok + curvature_ok (det_ei).
         self.last_step_info: dict = {}
@@ -723,7 +723,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             # THESIS EXTENSION — BEGIN
             # Description: alpha_max = 2*l (dynamic, from model lengthscale)
             #   when not set explicitly. At 2*l the SE kernel correlation is
-            #   exp(-2) ~ 13.5% — the GP is essentially uninformed beyond that.
+            #   exp(-2) ~ 13.5% --> the GP is essentially uninformed beyond that.
             #   Kept separate from delta so GI bounds (±delta) are unaffected.
             # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
             # delta_val = float(self.delta) if self.delta is not None else 0.1
@@ -803,9 +803,9 @@ class BayesianGradientAscent(AbstractOptimizer):
                     # Description: Guard for non-ascending direction. Checked once
                     #   here (phi_prime_0 is fixed for the entire inner loop).
                     #   phi'(0) <= 0 means p points downhill on the posterior mean.
-                    #   More GI samples cannot fix this — break immediately.
+                    #   More GI samples cannot fix this --> break immediately.
                     #   Without this guard, Armijo would be trivially satisfied for
-                    #   negative phi'(0), making p_Wolfe spuriously high.
+                    #   negative phi'(0), making p_Wolfe high.
                     # ============================================================
                     if float(phi_prime_0) <= 0.0:
                         # Fallback step = lr * l: dimensionally consistent with
@@ -838,7 +838,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 # Update center_alpha for next GI bound shift.
                 # ============================================================
                 # THESIS EXTENSION — BEGIN
-                # Description: Änderung 3 — wider clipping range [0.1*l, alpha_max].
+                # Description: wider clipping range [0.1*l, alpha_max].
                 #   Lower bound 0.1*l (was 0.5*l): allows small steps early when
                 #   the line search returns conservative candidates.
                 #   Upper bound alpha_max_val (was l): consistent with the search
@@ -850,14 +850,11 @@ class BayesianGradientAscent(AbstractOptimizer):
                 # ============================================================
                 # THESIS EXTENSION — END
                 # ============================================================
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
 
                 # 4. Compute p_Wolfe at alpha_candidate.
                 # ============================================================
                 # THESIS EXTENSION — BEGIN
-                # Description: Änderung 4+5 — pass sigma_floor; request
+                # Description: pass sigma_floor; request
                 #   diagnostics when verbose for richer logging.
                 # ============================================================
                 _diag = compute_p_wolfe(
@@ -898,7 +895,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             if not _wolfe_satisfied and p_direction is not None:
                 # ============================================================
                 # THESIS EXTENSION — BEGIN
-                # Description: Fallback-Pfad 3 — max_samples reached without
+                # Description: Fallback-Path 3 --> max_samples reached without
                 #   Wolfe being satisfied. The line search found no trustworthy
                 #   step. Use a conservative baseline-style step (lr * l) instead
                 #   of the last alpha_candidate which may be large and unvalidated.
@@ -909,19 +906,17 @@ class BayesianGradientAscent(AbstractOptimizer):
                 # ============================================================
                 _ls = self.model.covar_module.base_kernel.lengthscale.mean().item()
                 alpha_candidate = self.optimizer_torch.param_groups[0]['lr'] * _ls
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
+            
                 if self.verbose:
                     print(
                         f"  Prob-Wolfe: max_samples ({self.max_samples_per_iteration}) "
                         f"reached without satisfying Wolfe. "
                         f"Using conservative fallback alpha={alpha_candidate:.4f}."
                     )
-            # --END Variant A inner loop
+            # END Variant A inner loop
 
         elif self.inner_loop_mode == 'det_ei':
-            # - Variant B: Deterministic Wolfe + EI inner loop
+            #  Variant B: Deterministic Wolfe + EI inner loop
             # Same lazy-direction design as Variant A: p is fixed after the
             # first GI sample to avoid the zero-gradient degeneracy at theta.
             # eta = phi_0 serves as EI reference (current posterior mean at theta).
@@ -931,7 +926,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             eta = None
             # ============================================================
             # THESIS EXTENSION — BEGIN
-            # Description: alpha_max = 2*l (dynamic) — mirrors prob_wolfe block.
+            # Description: alpha_max = 2*l (dynamic) --> mirrors prob_wolfe block.
             # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
             # delta_val = float(self.delta) if self.delta is not None else 0.1
             # --- END ORIGINAL GIBO CODE ---
