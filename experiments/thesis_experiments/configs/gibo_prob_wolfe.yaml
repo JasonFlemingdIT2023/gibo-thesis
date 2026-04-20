@@ -44,7 +44,7 @@ alpha_max: 0.4                  # upper bound for line search (separate from del
 
 c1: 0.05                        # Armijo constant
 c2: 0.5                         # curvature constant
-c_W: 0.5                        # Wolfe probability threshold (increased from 0.3)
+c_W: 0.7                         # Wolfe probability threshold (increased from 0.3)
 
 results_dir: experiments/thesis_experiments/results
 verbose: false

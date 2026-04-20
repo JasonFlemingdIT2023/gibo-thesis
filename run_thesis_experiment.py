@@ -136,6 +136,19 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
         alpha_max=cfg.get("alpha_max", None),
         min_samples_per_iteration=cfg.get("min_samples_per_iteration", 1),
         # ============================================================
+        # THESIS EXTENSION — Adaptive Trust Region
+        # Description: Trust-region params forwarded from YAML config.
+        #   Defaults reproduce non-TR behaviour (trust_region_adaptive=False).
+        # ============================================================
+        trust_region_adaptive=cfg.get("trust_region_adaptive", False),
+        delta_init=cfg.get("delta_init", 0.2),
+        delta_min=cfg.get("delta_min", 0.1),
+        delta_max=cfg.get("delta_max", 2.0),
+        tr_expand_factor=cfg.get("tr_expand_factor", 1.5),
+        tr_contract_factor=cfg.get("tr_contract_factor", 0.5),
+        tr_rho_high=cfg.get("tr_rho_high", 0.75),
+        tr_rho_low=cfg.get("tr_rho_low", 0.25),
+        # ============================================================
         # THESIS EXPERIMENT EXTENSION — END
         # ============================================================
     )
@@ -173,6 +186,12 @@ def run_single(cfg: dict, dim: int, seed: int,
     gradient_norms = []
     posterior_variance_trace = []
     calls_at_iteration = []
+    # ============================================================
+    # THESIS EXTENSION - Adaptive Trust Region
+    # ============================================================
+    delta_tr_trace = []        # det_ei and TR only
+    trust_region_trace = []    # rho / status dicts, det_ei plus TR only
+    # ============================================================
 
     max_calls = cfg["max_objective_calls"]
 
@@ -194,6 +213,13 @@ def run_single(cfg: dict, dim: int, seed: int,
             wolfe_satisfied_trace.append(info.get("wolfe_satisfied", None))
             armijo_ok_trace.append(info.get("armijo_ok", None))
             curvature_ok_trace.append(info.get("curvature_ok", None))
+            # ============================================================
+            # THESIS EXTENSION - Adaptive Trust Region
+            # ============================================================
+            if cfg.get("trust_region_adaptive", False):
+                delta_tr_trace.append(info.get("delta_tr", None))
+                trust_region_trace.append(info.get("trust_region", None))
+            # ============================================================
 
     # Simple regret at each iteration: f_max - best_so_far
     best_so_far = float("-inf")
@@ -216,6 +242,12 @@ def run_single(cfg: dict, dim: int, seed: int,
         "gradient_norms": gradient_norms,
         "posterior_variance_trace": posterior_variance_trace,
         "calls_at_iteration": calls_at_iteration,
+        # ============================================================
+        # THESIS EXTENSION — Adaptive Trust Region
+        # ============================================================
+        "delta_tr_trace": delta_tr_trace,
+        "trust_region_trace": trust_region_trace,
+        # ============================================================
         "f_max": float(f_max),
         "config": cfg,
         "seed": seed,

@@ -547,6 +547,21 @@ class BayesianGradientAscent(AbstractOptimizer):
         alpha_max: Optional[float] = None, # other delta to not interfere GI trust region delta
         min_samples_per_iteration: int = 1,# min samples for ioteration as option
         # ============================================================
+        # THESIS EXTENSION - Adaptive Trust Region
+        # Description: Trust-region parameters for det_ei mode.
+        #   delta_tr is updated each outer step based on step quality
+        #   (rho = actual_gain / predicted_gain). Completely independent
+        #   of self.delta (GI acquisition box) so GI sampling is unaffected.
+        # ============================================================
+        trust_region_adaptive: bool = False,
+        delta_init: float = 0.2,
+        delta_min: float = 0.1,
+        delta_max: float = 2.0,
+        tr_expand_factor: float = 1.5,
+        tr_contract_factor: float = 0.5,
+        tr_rho_high: float = 0.75,
+        tr_rho_low: float = 0.25,
+        # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
     ) -> None:
@@ -627,6 +642,22 @@ class BayesianGradientAscent(AbstractOptimizer):
         # Additional keys by mode: p_wolfe (prob_wolfe), wolfe_satisfied +
         # armijo_ok + curvature_ok (det_ei).
         self.last_step_info: dict = {}
+        # ============================================================
+        # THESIS EXTENSION - Adaptive Trust Region
+        # ============================================================
+        self.trust_region_adaptive = trust_region_adaptive
+        self.delta_tr = float(delta_init)
+        self.delta_min = float(delta_min)
+        self.delta_max = float(delta_max)
+        self.tr_expand_factor = float(tr_expand_factor)
+        self.tr_contract_factor = float(tr_contract_factor)
+        self.tr_rho_high = float(tr_rho_high)
+        self.tr_rho_low = float(tr_rho_low)
+        # State for retrospective rho computation (set/read across outer steps).
+        self.tr_last_theta: Optional[torch.Tensor] = None
+        self.tr_last_mu_predicted_gain: Optional[float] = None
+        # Cache set by _update_trust_region, consumed by last_step_info block.
+        self._tr_info_cache: dict = {}
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
@@ -814,14 +845,20 @@ class BayesianGradientAscent(AbstractOptimizer):
             # THESIS EXTENSION — BEGIN
             # Description: Use alpha_max (separate from delta) as the upper
             #   bound for EI line search — mirrors the prob_wolfe fix above.
+            #   When trust_region_adaptive=True, self.delta_tr is used instead,
+            #   giving a dynamic upper bound that adapts to step quality.
             # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
             # delta_val = float(self.delta) if self.delta is not None else 0.1
             # --- END ORIGINAL GIBO CODE ---
-            alpha_max_val = (
-                float(self.alpha_max) if self.alpha_max is not None
-                else float(self.delta) if self.delta is not None
-                else 0.1
-            )
+            if self.trust_region_adaptive:
+                # Adaptive TR: bound EI search by current trust region radius.
+                alpha_max_val = self.delta_tr
+            else:
+                alpha_max_val = (
+                    float(self.alpha_max) if self.alpha_max is not None
+                    else float(self.delta) if self.delta is not None
+                    else 0.1
+                )
             # ============================================================
             # THESIS EXTENSION — END
             # ============================================================
@@ -927,8 +964,22 @@ class BayesianGradientAscent(AbstractOptimizer):
             with torch.no_grad():
                 self.optimizer_torch.zero_grad()
                 if p_direction is not None:
+                    # ============================================================
+                    # THESIS EXTENSION - Adaptive Trust Region
+                    # Capture theta_t before update; update TR radius afterward.
+                    # Only active for det_ei with trust_region_adaptive=True.
+                    # ============================================================
+                    if self.inner_loop_mode == 'det_ei' and self.trust_region_adaptive:
+                        _theta_before_step = self.params.clone()
+                    # ============================================================
                     self.params.data += alpha_candidate * p_direction
-                self.iteration += 1 
+                    # ============================================================
+                    # THESIS EXTENSION — Adaptive Trust Region (continued)
+                    # ============================================================
+                    if self.inner_loop_mode == 'det_ei' and self.trust_region_adaptive:
+                        self._update_trust_region(_theta_before_step)
+                    # ============================================================
+                self.iteration += 1
             # --- END Variant A & B gradient step ---
         # ============================================================
         # THESIS EXTENSION — END
@@ -972,6 +1023,14 @@ class BayesianGradientAscent(AbstractOptimizer):
                 'curvature_ok': curvature_ok,
                 'grad_norm': _grad_norm,
                 'sigma2': _sigma2,
+                # ============================================================
+                # THESIS EXTENSION — Adaptive Trust Region
+                # delta_tr: current TR radius after update (None if TR disabled).
+                # trust_region: rho, status, gains from _update_trust_region.
+                # ============================================================
+                'delta_tr': self.delta_tr if self.trust_region_adaptive else None,
+                'trust_region': self._tr_info_cache if self.trust_region_adaptive else None,
+                # ============================================================
             }
         # ============================================================
         # THESIS EXTENSION — END
@@ -995,3 +1054,87 @@ class BayesianGradientAscent(AbstractOptimizer):
             print(
                 f"lengthscale: {self.model.covar_module.base_kernel.lengthscale.detach().numpy()}, outputscale: {self.model.covar_module.outputscale.detach().numpy()},  noise {self.model.likelihood.noise.detach().numpy()}"
             )
+
+    # ============================================================
+    # THESIS EXTENSION - Adaptive Trust Region
+    # Description: Update trust region radius delta_tr after each outer step.
+    #
+    # Retrospective rho computation (Nocedal & Wright 2006, Ch. 4):
+    #   rho = actual_gain / predicted_gain
+    #
+    # actual_gain   = mu_post(theta_t) - mu_post(theta_{t-1})
+    #                 evaluated with the current GP (updated after collecting
+    #                 GI samples around theta_t).
+    # predicted_gain = mu_post_prev(theta_t) - mu_post_prev(theta_{t-1})
+    #                 stored at the end of the previous outer step.
+    #
+    # Both gains use GP posterior evaluations --> zero additional real rollouts.
+    # Comparison is approximate because the GP changes between steps, but
+    # within-model experiments justify this: the GP converges to J.
+    # ============================================================
+    def _update_trust_region(self, theta_old: torch.Tensor) -> None:
+        """Update adaptive trust region radius based on step quality.
+
+        Called after self.params has been updated to theta_new = theta_old + alpha*p.
+        Uses retrospective rho = actual_gain / predicted_gain to decide
+        whether to expand, contract, or maintain self.delta_tr.
+
+        Args:
+            theta_old: Parameter vector before the gradient step (theta_t),
+                shape [1, D]. self.params is already theta_{t+1} at call time.
+        """
+        self._tr_info_cache = {}   # reset cache for this step
+
+        with torch.no_grad():
+            theta_new = self.params   # already updated
+
+            # Predicted gain: how much does the current GP expect from this step?
+            mu_at_old = self.model.posterior(theta_old).mvn.mean.item()
+            mu_at_new = self.model.posterior(theta_new).mvn.mean.item()
+            predicted_gain_this_step = mu_at_new - mu_at_old
+
+            # Retrospective rho: compare last step's prediction vs. actual.
+            if (self.tr_last_theta is not None
+                    and self.tr_last_mu_predicted_gain is not None):
+                # Actual gain from the previous step (theta_{t-1} → theta_t),
+                # evaluated with the GP that now has data around theta_t.
+                mu_at_last = self.model.posterior(self.tr_last_theta).mvn.mean.item()
+                actual_gain = mu_at_old - mu_at_last
+                predicted_gain = self.tr_last_mu_predicted_gain
+
+                # rho: 1.0 means perfect prediction, <0 means step was harmful.
+                rho = actual_gain / (abs(predicted_gain) + 1e-8)
+
+                if rho > self.tr_rho_high:
+                    new_delta = min(self.delta_tr * self.tr_expand_factor, self.delta_max)
+                    status = "expand"
+                elif rho < self.tr_rho_low:
+                    new_delta = max(self.delta_tr * self.tr_contract_factor, self.delta_min)
+                    status = "contract"
+                else:
+                    new_delta = self.delta_tr
+                    status = "maintain"
+
+                self._tr_info_cache = {
+                    'rho': float(rho),
+                    'delta_old': float(self.delta_tr),
+                    'delta_new': float(new_delta),
+                    'status': status,
+                    'actual_gain': float(actual_gain),
+                    'predicted_gain': float(predicted_gain),
+                }
+
+                if self.verbose:
+                    print(
+                        f"  TR update: rho={rho:.3f} → {status}, "
+                        f"delta_tr: {self.delta_tr:.4f} → {new_delta:.4f}"
+                    )
+
+                self.delta_tr = new_delta
+
+        # Store current step's prediction for retrospective comparison next step.
+        self.tr_last_theta = theta_old.clone()
+        self.tr_last_mu_predicted_gain = predicted_gain_this_step
+    # ============================================================
+    # THESIS EXTENSION — END
+    # ============================================================

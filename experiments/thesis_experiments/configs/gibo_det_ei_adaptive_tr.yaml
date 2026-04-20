@@ -1,0 +1,73 @@
+# ============================================================
+# THESIS EXPERIMENT — Variant B + Adaptive Trust Region Config
+# ============================================================
+# GIBO with deterministic Wolfe conditions + EI step size selection,
+# extended with an adaptive trust region that expands/contracts delta_tr
+# based on step quality (rho = actual_gain / predicted_gain).
+#
+# Key difference from gibo_det_ei.yaml:
+#   - trust_region_adaptive: true  → delta_tr replaces alpha_max as EI bound
+#   - delta_tr starts at delta_init, adapts each outer step
+#   - GI acquisition bounds (delta: 0.2) are UNCHANGED
+#
+# Run:
+#   python run_thesis_experiment.py \
+#       -c experiments/thesis_experiments/configs/gibo_det_ei_adaptive_tr.yaml \
+#       -d experiments/thesis_experiments/data
+#
+# Smoke test:
+#   python run_thesis_experiment.py \
+#       -c experiments/thesis_experiments/configs/gibo_det_ei_adaptive_tr.yaml \
+#       -d experiments/thesis_experiments/data \
+#       --smoke
+
+name: gibo_det_ei_adaptive_tr
+description: "Variant B + Adaptive Trust Region: EI step size, adaptive delta_tr"
+
+dimensions: [4, 8, 12, 16, 20, 24, 28, 32, 36]
+n_runs: 40
+seed_start: 0
+max_objective_calls: 300
+
+noise_variance: 0.01
+gp_hypers:
+  outputscale: 1.0
+factor_lengthscale: 2
+
+inner_loop_mode: det_ei
+max_samples_per_iteration: dim_search_space   # safety limit = dim (fair vs baseline)
+min_samples_per_iteration: 2                  # collect at least 2 GI samples before stopping
+epsilon_diff_acq_value: null    # our stopping criterion replaces epsilon_diff
+
+lr: 0.25                        # kept for structural consistency (unused by det_ei)
+lr_schedular: null
+normalize_gradient: false       # direction already normalized via p
+standard_deviation_scaling: false
+
+N_max: variable                 # 5 * dim
+optimize_hyperparameters: false
+no_noise_optimization: false
+
+acqf_num_restarts: 5
+acqf_raw_samples: 64
+delta: 0.2                      # GI acquisition trust region (±delta box around theta) 
+alpha_max: null                 # unused when trust_region_adaptive=true
+
+c1: 0.05                        # Armijo constant
+c2: 0.5                         # curvature constant
+c_W: 0.3                        # unused for det_ei (kept for structural consistency)
+
+# ============================================================
+# Adaptive Trust Region parameters
+# ============================================================
+trust_region_adaptive: true
+delta_init: 0.2        # starting TR radius (= alpha_max of baseline det_ei)
+delta_min: 0.1         # never shrink below this
+delta_max: 2.0         # never grow beyond this (≤ 2 * typical lengthscale)
+tr_expand_factor: 1.5  # multiply delta_tr when rho > tr_rho_high
+tr_contract_factor: 0.5 # multiply delta_tr when rho < tr_rho_low
+tr_rho_high: 0.75      # threshold: step quality good --> expand
+tr_rho_low: 0.25       # threshold: step quality poor --> contract
+
+results_dir: experiments/thesis_experiments/results
+verbose: false
