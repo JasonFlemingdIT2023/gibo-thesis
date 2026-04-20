@@ -134,3 +134,4 @@ dmypy.json
 # Tests
 tests/
 test_*.py
+Miniconda3-latest-Linux-x84_64.sh
