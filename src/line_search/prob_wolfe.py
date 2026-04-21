@@ -92,6 +92,7 @@ def compute_p_wolfe(
     phi_prime_0: torch.Tensor = None,
     c1: float = 0.05,
     c2: float = 0.5,
+    sigma_floor: float = 0.0,
 ) -> float:
     """Compute p_Wolfe(alpha) = P(W-I holds AND W-II holds | GP posterior).
 
@@ -118,6 +119,10 @@ def compute_p_wolfe(
         phi_prime_0: Pre-computed p^T mean_d(theta) — same.
         c1: Armijo constant (default 0.05).
         c2: Curvature constant (default 0.5).
+        sigma_floor: Minimum posterior std fraction passed to compute_s_terms.
+            Applied to diagonal S-terms (S11, S22, S33, S44) to prevent
+            p_Wolfe from collapsing near training data where variance → 0.
+            Default 0.0 preserves original behaviour. Use 0.1 for ei_pwolfe.
 
     Returns:
         p_Wolfe in [0, 1] as float.
@@ -129,8 +134,8 @@ def compute_p_wolfe(
     # --Values at alpha 
     phi_a, phi_prime_a, _ = eval_phi(model, theta, alpha, p)
 
-    # --All 10 cross-covariance terms 
-    s = compute_s_terms(model, theta, alpha, p)
+    # All 10 cross-covariance terms (sigma_floor applied inside)
+    s = compute_s_terms(model, theta, alpha, p, sigma_floor=sigma_floor)
 
     # --Means of a_t (Armijo) and b_t (curvature) 
     #m_a = phi(alpha) - phi(0) - c1*alpha*phi'(0)

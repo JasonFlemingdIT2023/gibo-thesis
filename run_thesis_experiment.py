@@ -136,6 +136,14 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
         alpha_max=cfg.get("alpha_max", None),
         min_samples_per_iteration=cfg.get("min_samples_per_iteration", 1),
         # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: sigma_floor (ei_pwolfe) and tau_snr (ei_snr) params.
+        #   Safe defaults: 0.1 and 1.0 match the YAML configs; existing
+        #   configs without these keys are unaffected (modes don't use them).
+        # ============================================================
+        sigma_floor=cfg.get("sigma_floor", 0.1),
+        tau_snr=cfg.get("tau_snr", 1.0),
+        # ============================================================
         # THESIS EXPERIMENT EXTENSION — END
         # ============================================================
     )
@@ -166,10 +174,12 @@ def run_single(cfg: dict, dim: int, seed: int,
     f_values = []
     inner_loop_samples = []
     step_sizes = []
-    p_wolfe_values = []        # Variant A only
-    wolfe_satisfied_trace = [] # both adaptive variants
-    armijo_ok_trace = []       # Variant B only
-    curvature_ok_trace = []    # Variant B only
+    p_wolfe_values = []        # prob_wolfe and ei_pwolfe
+    wolfe_satisfied_trace = [] # prob_wolfe, det_ei, ei_pwolfe
+    armijo_ok_trace = []       # det_ei, ei_pwolfe, ei_snr
+    curvature_ok_trace = []    # det_ei, ei_pwolfe, ei_snr
+    snr_values_trace = []      # ei_snr only
+    snr_satisfied_trace = []   # ei_snr only
     gradient_norms = []
     posterior_variance_trace = []
     calls_at_iteration = []
@@ -187,13 +197,31 @@ def run_single(cfg: dict, dim: int, seed: int,
         posterior_variance_trace.append(info.get("sigma2", None))
         calls_at_iteration.append(objective._calls)
 
-        if cfg["inner_loop_mode"] == "prob_wolfe":
+        mode = cfg["inner_loop_mode"]
+        if mode == "prob_wolfe":
             p_wolfe_values.append(info.get("p_wolfe", None))
             wolfe_satisfied_trace.append(info.get("wolfe_satisfied", None))
-        elif cfg["inner_loop_mode"] == "det_ei":
+        elif mode == "det_ei":
             wolfe_satisfied_trace.append(info.get("wolfe_satisfied", None))
             armijo_ok_trace.append(info.get("armijo_ok", None))
             curvature_ok_trace.append(info.get("curvature_ok", None))
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Metric logging for ei_pwolfe and ei_snr variants
+        # ============================================================
+        elif mode == "ei_pwolfe":
+            p_wolfe_values.append(info.get("p_wolfe", None))
+            wolfe_satisfied_trace.append(info.get("wolfe_satisfied", None))
+            armijo_ok_trace.append(info.get("armijo_ok", None))
+            curvature_ok_trace.append(info.get("curvature_ok", None))
+        elif mode == "ei_snr":
+            snr_values_trace.append(info.get("snr_value", None))
+            snr_satisfied_trace.append(info.get("snr_satisfied", None))
+            armijo_ok_trace.append(info.get("armijo_ok", None))
+            curvature_ok_trace.append(info.get("curvature_ok", None))
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
 
     # Simple regret at each iteration: f_max - best_so_far
     best_so_far = float("-inf")
@@ -209,10 +237,12 @@ def run_single(cfg: dict, dim: int, seed: int,
         "f_values": [p.numpy() for p in f_values],
         "inner_loop_samples": inner_loop_samples,
         "step_sizes": step_sizes,
-        "p_wolfe_values": p_wolfe_values,
+        "p_wolfe_values": p_wolfe_values,       # prob_wolfe, ei_pwolfe
         "wolfe_satisfied": wolfe_satisfied_trace,
         "armijo_ok": armijo_ok_trace,
         "curvature_ok": curvature_ok_trace,
+        "snr_values": snr_values_trace,         # ei_snr only
+        "snr_satisfied": snr_satisfied_trace,   # ei_snr only
         "gradient_norms": gradient_norms,
         "posterior_variance_trace": posterior_variance_trace,
         "calls_at_iteration": calls_at_iteration,

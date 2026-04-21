@@ -271,6 +271,7 @@ def compute_s_terms(
     theta: torch.Tensor,
     alpha: float,
     p: torch.Tensor,
+    sigma_floor: float = 0.0,
 ) -> Dict[str, torch.Tensor]:
     """Compute all cross-covariance terms for the probabilistic Wolfe conditions.
 
@@ -299,6 +300,13 @@ def compute_s_terms(
         theta: Current parameters, shape [1, D].
         alpha: Scalar step size candidate.
         p: Normalized search direction, shape [1, D].
+        sigma_floor: Minimum posterior std as a fraction of sqrt(outputscale).
+            Applied to diagonal S-terms (S11, S22, S33, S44) to prevent
+            p_Wolfe collapsing to 0 or 1 near training data where variance → 0.
+            Gradient floor is scaled by 1/l^2 (from SE kernel derivative).
+            Default 0.0 (no floor, backward-compatible). Use 0.1 for ei_pwolfe.
+            Design choice: simulates Mahsereci & Hennig's Wiener process
+            minimum variance, which never reaches zero along the path.
 
     Returns:
         Dictionary mapping 'S11', 'S12', ..., 'S34' to scalar tensors.
@@ -308,50 +316,51 @@ def compute_s_terms(
     p_vec = p.squeeze()                          # [D]
 
     with torch.no_grad():
-        # --Diagonal variances 
-
-        #S11, S33: posterior variance (latent, no noise) at theta and theta+alpha*p
+        # Diagonal variances
         S11 = model.posterior(x0).mvn.variance.squeeze()   # scalar
-        S33 = model.posterior(xa).mvn.variance.squeeze()   #scalar
+        S33 = model.posterior(xa).mvn.variance.squeeze()   # scalar
 
-        # S22: posterior gradient variance projected onto p at theta
-        _, var_d_0 = model.posterior_derivative(x0)        # [1, D, D] or [D, D]
-        var_d_0 = var_d_0.squeeze()                        # [D, D]
+        _, var_d_0 = model.posterior_derivative(x0)        # [D, D]
+        var_d_0 = var_d_0.squeeze()
         S22 = p_vec @ var_d_0 @ p_vec                     # scalar
 
-        # S44: posterior gradient variance projected onto p at theta+alpha*p
         _, var_d_a = model.posterior_derivative(xa)        # [D, D]
-        var_d_a = var_d_a.squeeze()                        # [D, D]
+        var_d_a = var_d_a.squeeze()
         S44 = p_vec @ var_d_a @ p_vec                     # scalar
 
-        # --Cross-covariances between function values
+        # ============================================================
+        # THESIS EXTENSION — BEGIN
+        # Description: Variance floor on diagonal S-terms.
+        #   Prevents p_Wolfe trivially collapsing near training data where
+        #   posterior variance → 0. Floor scales with outputscale so it
+        #   is GP-signal-relative. Gradient floor is outputscale/l^2
+        #   (matches SE kernel derivative variance at prior).
+        #   Design: mimics Mahsereci & Hennig's Wiener process which has
+        #   non-zero variance everywhere along the path.
+        # ============================================================
+        if sigma_floor > 0.0:
+            outputscale = float(model.covar_module.outputscale.detach())
+            floor_var = (sigma_floor ** 2) * outputscale
+            ls_mean = model.covar_module.base_kernel.lengthscale.mean().item()
+            floor_grad_var = floor_var / (ls_mean ** 2)
+            S11 = S11.clamp(min=floor_var)
+            S33 = S33.clamp(min=floor_var)
+            S22 = S22.clamp(min=floor_grad_var)
+            S44 = S44.clamp(min=floor_grad_var)
+        # ============================================================
+        # THESIS EXTENSION — END
+        # ============================================================
 
-        # S13: Cov(f(theta), f(theta+alpha*p))
+        # Cross-covariances between function values
         S13 = posterior_cov(model, x0, xa)                 # scalar
 
-        # --Cross-covariances between function value and gradient 
-
-        # S12: Cov(f(theta), f'(theta) along p)
-        # = p^T d k_post(theta, theta) / d theta'
+        # Cross-covariances between function value and gradient
         S12 = p_vec @ posterior_dcov_dx2(model, x0, x0)   # scalar
-
-        # S14: Cov(f(theta), f'(theta+alpha*p) along p)
-        # = p^T d k_post(theta, theta+alpha*p) / d (theta+alpha*p)
         S14 = p_vec @ posterior_dcov_dx2(model, x0, xa)   # scalar
-
-        # S23: Cov(f'(theta) along p, f(theta+alpha*p))
-        # = p^T d k_post(theta+alpha*p, theta) / d theta   
-        # = p^T d k_post(theta, theta+alpha*p) / d theta   [equiv. by symmetry]
         S23 = p_vec @ posterior_dcov_dx2(model, xa, x0)   # scalar
-
-        # S34: Cov(f(theta+alpha*p), f'(theta+alpha*p) along p)
-        # = p^T d k_post(theta+alpha*p, theta+alpha*p) / d (theta+alpha*p)'
         S34 = p_vec @ posterior_dcov_dx2(model, xa, xa)   # scalar
 
-        # - Cross-covariance between gradients 
-
-        # S24: Cov(f'(theta) along p, f'(theta+alpha*p) along p)
-        # = p^T d^2 k_post(theta, theta+alpha*p)/(d theta d (theta+alpha*p)^T) p
+        # Cross-covariance between gradients
         d2cov = posterior_d2cov_dx1dx2(model, x0, xa)     # [D, D]
         S24 = p_vec @ d2cov @ p_vec                       # scalar
 
@@ -447,3 +456,55 @@ def eval_phi_0(
         sigma2_0:    sigma2_post(theta), scalar tensor.
     """
     return eval_phi(model, theta, 0.0, p)
+
+
+# ============================================================
+# THESIS EXTENSION — BEGIN
+# Description: Gradient SNR utility for ei_snr inner loop termination.
+# ============================================================
+def compute_gradient_snr(
+    model,
+    theta: torch.Tensor,
+    p: torch.Tensor,
+    phi_prime_0: torch.Tensor = None,
+) -> float:
+    """Compute gradient Signal-to-Noise Ratio along search direction p.
+
+    SNR = (p^T mean_d(theta))^2 / (p^T variance_d(theta) p)
+        = phi'(0)^2 / S22
+
+    Interpretation:
+        SNR >= tau : gradient signal dominates uncertainty --> direction reliable
+        SNR <  tau : gradient is noise-dominated --> collect more GI samples
+
+    In the within-model setting, SNR grows as GI samples are added because
+    variance_d(theta) shrinks while mean_d(theta) stabilises.
+
+    Args:
+        model: DerivativeExactGPSEModel with current training data.
+        theta: Current parameters, shape [1, D].
+        p: Normalized search direction, shape [1, D].
+        phi_prime_0: Pre-computed p^T mean_d(theta) as scalar tensor.
+            If provided, avoids a redundant posterior_derivative call.
+
+    Returns:
+        SNR as float. Returns inf if S22 < 1e-12 (gradient perfectly certain).
+    """
+    with torch.no_grad():
+        mean_d, var_d = model.posterior_derivative(theta)  
+        p_vec = p.squeeze()                                 
+        var_d = var_d.squeeze()                             
+        S22 = float(p_vec @ var_d @ p_vec)               
+
+        if S22 < 1e-12:
+            return float('inf')
+
+        if phi_prime_0 is not None:
+            signal = float(phi_prime_0) ** 2
+        else:
+            signal = float((p * mean_d).sum()) ** 2
+
+    return signal / S22
+# ============================================================
+# THESIS EXTENSION — END
+# ============================================================

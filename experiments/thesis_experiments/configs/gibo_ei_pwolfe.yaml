@@ -1,0 +1,57 @@
+
+# =========================================================
+#  THESIS EXPERIMENT -Variant ei_pwolfe Config
+#  ============================================================
+#  GIBO with EI step size + probabilistic Wolfe termination.
+
+#  Step selection:  alpha* = argmax EI(alpha) over (0, alpha_max]
+#  Termination:     stop when p_Wolfe(alpha*) > c_W = 0.3
+
+#  Differs from det_ei:
+#    - Termination criterion is probabilistic (p_Wolfe) not deterministic Wolfe
+#    - sigma_floor > 0 prevents p_Wolfe collapsing to 0 near training data
+#      (mimics Mahsereci & Hennig's Wiener process non-zero variance floor)
+#  Differs from prob_wolfe:
+#    - Step size is EI-optimal (exploitation+exploration) not argmax mu_post
+
+    
+name: gibo_ei_pwolfe
+description: "Variant ei_pwolfe: EI step size + probabilistic Wolfe termination"
+
+dimensions: [4, 8, 16, 24, 32]
+n_runs: 30
+seed_start: 0
+max_objective_calls: 300
+
+noise_variance: 0.01
+gp_hypers:
+  outputscale: 1.0
+factor_lengthscale: 2
+
+inner_loop_mode: ei_pwolfe
+max_samples_per_iteration: dim_search_space   # safety limit = dim
+min_samples_per_iteration: 2
+epsilon_diff_acq_value: null
+
+lr: 0.25
+lr_schedular: null
+normalize_gradient: false
+standard_deviation_scaling: false
+
+N_max: variable                 # 5 * dim
+optimize_hyperparameters: false
+no_noise_optimization: false
+
+acqf_num_restarts: 5
+acqf_raw_samples: 64
+delta: 0.2                      # GI acquisition box (unchanged)
+alpha_max: 0.4                  # upper bound for EI line search
+
+c1: 0.05
+c2: 0.5
+c_W: 0.3                        # p_Wolfe termination threshold
+sigma_floor: 0.1                # variance floor for p_Wolfe (fraction of sqrt(outputscale))
+tau_snr: 1.0                    # unused 
+
+results_dir: experiments/thesis_experiments/results
+verbose: false

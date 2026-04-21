@@ -19,7 +19,10 @@ from src.model import ExactGPSEModel, DerivativeExactGPSEModel
 # ============================================================
 from src.line_search.utils import get_search_direction, eval_phi_0
 from src.line_search.prob_wolfe import find_alpha_star, compute_p_wolfe
-from src.line_search.det_ei import find_alpha_star_ei, check_det_wolfe
+from src.line_search.det_ei import (
+    find_alpha_star_ei, check_det_wolfe,
+    check_ei_pwolfe, check_ei_snr,
+)
 # ============================================================
 # THESIS EXTENSION — END
 # ============================================================
@@ -544,8 +547,10 @@ class BayesianGradientAscent(AbstractOptimizer):
         c1: float = 0.05,
         c2: float = 0.5,
         c_W: float = 0.3,
-        alpha_max: Optional[float] = None, # other delta to not interfere GI trust region delta
-        min_samples_per_iteration: int = 1,# min samples for ioteration as option
+        alpha_max: Optional[float] = None,   # separate from GI delta; see det_ei branch
+        min_samples_per_iteration: int = 1,
+        sigma_floor: float = 0.1,            # ei_pwolfe: variance floor for p_Wolfe
+        tau_snr: float = 1.0,                # ei_snr: gradient SNR threshold
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
@@ -622,10 +627,9 @@ class BayesianGradientAscent(AbstractOptimizer):
         # unaffected when the line search range is changed.
         self.alpha_max = alpha_max
         self.min_samples_per_iteration = min_samples_per_iteration
+        self.sigma_floor = sigma_floor
+        self.tau_snr = tau_snr
         # Metrics from last step() call — read by thesis experiment runner.
-        # Keys populated by all modes: n_inner_samples, alpha, grad_norm, sigma2.
-        # Additional keys by mode: p_wolfe (prob_wolfe), wolfe_satisfied +
-        # armijo_ok + curvature_ok (det_ei).
         self.last_step_info: dict = {}
         # ============================================================
         # THESIS EXTENSION — END
@@ -871,7 +875,7 @@ class BayesianGradientAscent(AbstractOptimizer):
 
                 # ============================================================
                 # THESIS EXTENSION — BEGIN
-                # Description: min_samples_per_iteration — mirrors prob_wolfe.
+                # Description: min_samples_per_iteration - mirrors prob_wolfe.
                 # ============================================================
                 if armijo_ok and curvature_ok and _n_inner >= self.min_samples_per_iteration:
                     _wolfe_satisfied = True
@@ -889,10 +893,147 @@ class BayesianGradientAscent(AbstractOptimizer):
                     f"  Det-EI: max_samples ({self.max_samples_per_iteration}) "
                     f"reached without satisfying Wolfe. Using alpha={alpha_candidate:.4f}."
                 )
-            # --- END Variant B inner loop ---
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
+
+        elif self.inner_loop_mode == 'ei_pwolfe':
+            # ============================================================
+            # THESIS EXTENSION — BEGIN
+            # Description: Variant ei_pwolfe - EI step size + probabilistic
+            #   Wolfe termination. Identical inner loop structure to det_ei;
+            #   only the termination check differs (check_ei_pwolfe with
+            #   sigma_floor prevents p_Wolfe from collapsing near data).
+            # ============================================================
+            p_direction = None
+            phi_0 = None
+            phi_prime_0 = None
+            eta = None
+            alpha_max_val = (
+                float(self.alpha_max) if self.alpha_max is not None
+                else float(self.delta) if self.delta is not None
+                else 0.1
+            )
+            alpha_candidate = alpha_max_val
+            _wolfe_satisfied = False
+            p_wolfe_val = 0.0
+            armijo_ok = False
+            curvature_ok = False
+            _n_inner = 0
+
+            for i in range(self.max_samples_per_iteration):
+                new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
+                new_y = self.objective(new_x)
+                self.model.append_train_data(new_x, new_y)
+                self.model.posterior(self.params)
+                self.acquisition_fcn.update_K_xX_dx()
+                _n_inner += 1
+
+                if p_direction is None:
+                    p_direction, _ = get_search_direction(self.model, self.params)
+                    phi_0, phi_prime_0, _ = eval_phi_0(
+                        self.model, self.params, p_direction
+                    )
+                    eta = phi_0
+
+                (
+                    _wolfe_satisfied, alpha_candidate,
+                    p_wolfe_val, armijo_ok, curvature_ok,
+                ) = check_ei_pwolfe(
+                    self.model, self.params, p_direction,
+                    phi_0=phi_0, phi_prime_0=phi_prime_0, eta=eta,
+                    delta=alpha_max_val, c1=self.c1, c2=self.c2,
+                    c_W=self.c_W, sigma_floor=self.sigma_floor,
+                )
+
+                if self.verbose:
+                    print(
+                        f"  EI-pWolfe iter {i+1}: alpha={alpha_candidate:.4f}, "
+                        f"p_Wolfe={p_wolfe_val:.4f} (thr={self.c_W}), "
+                        f"Armijo={'OK' if armijo_ok else 'NO'}, "
+                        f"Curv={'OK' if curvature_ok else 'NO'}"
+                    )
+
+                if _wolfe_satisfied and _n_inner >= self.min_samples_per_iteration:
+                    if self.verbose:
+                        print(f"  EI-pWolfe satisfied after {_n_inner} samples.")
+                    break
+
+            if self.verbose and not _wolfe_satisfied:
+                print(
+                    f"  EI-pWolfe: max_samples ({self.max_samples_per_iteration}) "
+                    f"reached. p_Wolfe={p_wolfe_val:.4f}, alpha={alpha_candidate:.4f}."
+                )
+            # ============================================================
+            # THESIS EXTENSION - END
+            # ============================================================
+
+        elif self.inner_loop_mode == 'ei_snr':
+            # ============================================================
+            # THESIS EXTENSION - BEGIN
+            # Description: Variant ei_snr  EI step size + gradient SNR
+            #   termination. Stops when SNR = phi'(0)^2/S22 >= tau_snr,
+            #   meaning the gradient signal dominates its uncertainty.
+            # ============================================================
+            p_direction = None
+            phi_0 = None
+            phi_prime_0 = None
+            eta = None
+            alpha_max_val = (
+                float(self.alpha_max) if self.alpha_max is not None
+                else float(self.delta) if self.delta is not None
+                else 0.1
+            )
+            alpha_candidate = alpha_max_val
+            _snr_satisfied = False
+            snr_val = 0.0
+            armijo_ok = False
+            curvature_ok = False
+            _n_inner = 0
+
+            for i in range(self.max_samples_per_iteration):
+                new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
+                new_y = self.objective(new_x)
+                self.model.append_train_data(new_x, new_y)
+                self.model.posterior(self.params)
+                self.acquisition_fcn.update_K_xX_dx()
+                _n_inner += 1
+
+                if p_direction is None:
+                    p_direction, _ = get_search_direction(self.model, self.params)
+                    phi_0, phi_prime_0, _ = eval_phi_0(
+                        self.model, self.params, p_direction
+                    )
+                    eta = phi_0
+
+                (
+                    _snr_satisfied, alpha_candidate,
+                    snr_val, armijo_ok, curvature_ok,
+                ) = check_ei_snr(
+                    self.model, self.params, p_direction,
+                    phi_0=phi_0, phi_prime_0=phi_prime_0, eta=eta,
+                    delta=alpha_max_val, c1=self.c1, c2=self.c2,
+                    tau_snr=self.tau_snr,
+                )
+
+                if self.verbose:
+                    snr_disp = f"{snr_val:.3f}" if snr_val != float('inf') else "inf"
+                    print(
+                        f"  EI-SNR iter {i+1}: alpha={alpha_candidate:.4f}, "
+                        f"SNR={snr_disp} (thr={self.tau_snr}), "
+                        f"Armijo={'OK' if armijo_ok else 'NO'}, "
+                        f"Curv={'OK' if curvature_ok else 'NO'}"
+                    )
+
+                if _snr_satisfied and _n_inner >= self.min_samples_per_iteration:
+                    if self.verbose:
+                        print(f"  EI-SNR satisfied after {_n_inner} samples.")
+                    break
+
+            if self.verbose and not _snr_satisfied:
+                snr_disp = f"{snr_val:.3f}" if snr_val != float('inf') else "inf"
+                print(
+                    f"  EI-SNR: max_samples ({self.max_samples_per_iteration}) "
+                    f"reached. SNR={snr_disp}, alpha={alpha_candidate:.4f}."
+                )
+            
 
         # ============================================================
         # THESIS EXTENSION — BEGIN
@@ -920,16 +1061,14 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.iteration += 1
             # --- END ORIGINAL GIBO CODE ---
 
-        elif self.inner_loop_mode in ('prob_wolfe', 'det_ei'):
-            # --- Variant A & B: Direct parameter update along p_direction ---
+        elif self.inner_loop_mode in ('prob_wolfe', 'det_ei', 'ei_pwolfe', 'ei_snr'):
+            #Variants A, B, ei_pwolfe, ei_snr: Direct update along p
             # Bypasses SGD entirely: theta_{t+1} = theta_t + alpha* * p
-            # p_direction is None only if max_samples_per_iteration == 0.
             with torch.no_grad():
                 self.optimizer_torch.zero_grad()
                 if p_direction is not None:
                     self.params.data += alpha_candidate * p_direction
-                self.iteration += 1 
-            # --- END Variant A & B gradient step ---
+                self.iteration += 1
         # ============================================================
         # THESIS EXTENSION — END
         # ============================================================
@@ -973,9 +1112,32 @@ class BayesianGradientAscent(AbstractOptimizer):
                 'grad_norm': _grad_norm,
                 'sigma2': _sigma2,
             }
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
+
+        elif self.inner_loop_mode == 'ei_pwolfe':
+            self.last_step_info = {
+                'mode': 'ei_pwolfe',
+                'n_inner_samples': _n_inner,
+                'alpha': float(alpha_candidate) if p_direction is not None else None,
+                'p_wolfe': float(p_wolfe_val),
+                'wolfe_satisfied': _wolfe_satisfied,
+                'armijo_ok': armijo_ok,
+                'curvature_ok': curvature_ok,
+                'grad_norm': _grad_norm,
+                'sigma2': _sigma2,
+            }
+        elif self.inner_loop_mode == 'ei_snr':
+            self.last_step_info = {
+                'mode': 'ei_snr',
+                'n_inner_samples': _n_inner,
+                'alpha': float(alpha_candidate) if p_direction is not None else None,
+                'snr_value': float(snr_val) if snr_val != float('inf') else None,
+                'snr_satisfied': _snr_satisfied,
+                'armijo_ok': armijo_ok,
+                'curvature_ok': curvature_ok,
+                'grad_norm': _grad_norm,
+                'sigma2': _sigma2,
+            }
+
 
         if (
             type(self.objective._func) is EnvironmentObjective
