@@ -10,8 +10,8 @@
 name: gibo_ei_snr
 description: "Variant ei_snr: EI step size + gradient SNR termination"
 
-dimensions: [4, 8, 16, 24, 32]
-n_runs: 30
+dimensions: [4, 8, 12, 16, 20, 24, 28, 32, 36]
+n_runs: 40
 seed_start: 0
 max_objective_calls: 300
 
