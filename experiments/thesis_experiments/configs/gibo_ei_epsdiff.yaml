@@ -29,7 +29,7 @@ factor_lengthscale: 2
 inner_loop_mode: det_ei
 max_samples_per_iteration: dim_search_space
 min_samples_per_iteration: 2
-epsilon_diff_acq_value: 0.1    # same as Baseline — activates epsilon_diff termination
+epsilon_diff_acq_value: 0.1    # same as Baseline --> activates epsilon_diff termination
 
 lr: 0.25
 lr_schedular: null
