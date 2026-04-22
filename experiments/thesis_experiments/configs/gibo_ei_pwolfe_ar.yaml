@@ -44,10 +44,10 @@ no_noise_optimization: false
 
 acqf_num_restarts: 5
 acqf_raw_samples: 64
-delta: 0.3                      # GI acquisition box (unchanged)
+delta: 0.2                      # GI acquisition box (unchanged)
 alpha_max: 0.4                  # upper bound for EI line search
 
-c1: 0.05
+c1: 0.03
 c2: 0.5
 c_W: 0.45                       # p_Wolfe termination threshold (recalibrated for sigma_floor=0.1)
 sigma_floor: 0.1                # variance floor for p_Wolfe (fraction of sqrt(outputscale))
