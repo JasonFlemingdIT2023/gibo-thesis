@@ -834,6 +834,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             armijo_ok = False             # default if loop never runs
             curvature_ok = False
             _n_inner = 0
+            acq_value_old = None
 
             for i in range(self.max_samples_per_iteration):
                 # 1. Real function evaluation via GI acquisition function.
@@ -875,9 +876,33 @@ class BayesianGradientAscent(AbstractOptimizer):
 
                 # ============================================================
                 # THESIS EXTENSION — BEGIN
-                # Description: min_samples_per_iteration - mirrors prob_wolfe.
-                # ============================================================
-                if armijo_ok and curvature_ok and _n_inner >= self.min_samples_per_iteration:
+                # Description: epsilon_diff_acq_value termination for det_ei
+                #   mirrors the baseline criterion. Active only when
+                #   epsilon_diff_acq_value is set in config (not None).
+                #   Terminates when the GI acquisition value improvement falls
+                #   below the threshold, i.e gradient uncertainty reduction is
+                #   no longer meaningful.
+                #   Deterministic Wolfe check is kept for logging only (not used
+                #   for termination when epsilon_diff_acq_value is set).
+                # --- ORIGINAL GIBO CODE (det_ei Wolfe termination, now logging only) ---
+                # if armijo_ok and curvature_ok and _n_inner >= self.min_samples_per_iteration:
+                #     _wolfe_satisfied = True
+                #     break
+                # --- END ORIGINAL GIBO CODE ---
+                if self.epsilon_diff_acq_value is not None:
+                    if acq_value_old is not None:
+                        diff = acq_value - acq_value_old
+                        if diff < self.epsilon_diff_acq_value:
+                            _wolfe_satisfied = True  # reuse flag for logging
+                            if self.verbose:
+                                print(
+                                    f"  Det-EI epsilon_diff satisfied after {_n_inner} "
+                                    f"inner samples (diff={diff:.6f})."
+                                )
+                            break
+                    acq_value_old = acq_value
+                elif armijo_ok and curvature_ok and _n_inner >= self.min_samples_per_iteration:
+                    # Fallback: use Wolfe when epsilon_diff_acq_value is None
                     _wolfe_satisfied = True
                     if self.verbose:
                         print(
@@ -891,7 +916,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             if self.verbose and not _wolfe_satisfied:
                 print(
                     f"  Det-EI: max_samples ({self.max_samples_per_iteration}) "
-                    f"reached without satisfying Wolfe. Using alpha={alpha_candidate:.4f}."
+                    f"reached without Wolfe/epsilon_diff. Using alpha={alpha_candidate:.4f}."
                 )
 
         elif self.inner_loop_mode == 'ei_pwolfe':

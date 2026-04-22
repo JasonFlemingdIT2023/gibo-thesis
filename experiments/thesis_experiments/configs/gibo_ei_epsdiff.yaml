@@ -1,0 +1,53 @@
+
+# =========================================================
+#  THESIS EXPERIMENT — Variant ei_epsdiff Config
+#  =========================================================
+#  GIBO with EI step size + epsilon_diff_acq_value termination.
+#
+#  Step selection:  alpha* = argmax EI(alpha) over (0, alpha_max]
+#  Termination:     stop when GI acquisition value improvement
+#                   falls below epsilon_diff_acq_value (same
+#                   criterion as Baseline, but with EI step size).
+#
+#  Ablation purpose: isolates the effect of EI step selection
+#  from the termination criterion by keeping termination identical
+#  to the Baseline while replacing the fixed step with EI-optimal alpha*.
+
+name: gibo_ei_epsdiff
+description: "EI step size + epsilon_diff termination (ablation vs baseline criterion)"
+
+dimensions: [4, 8, 12, 16, 20, 24, 28, 32, 36]
+n_runs: 40
+seed_start: 0
+max_objective_calls: 300
+
+noise_variance: 0.01
+gp_hypers:
+  outputscale: 1.0
+factor_lengthscale: 2
+
+inner_loop_mode: det_ei
+max_samples_per_iteration: dim_search_space
+min_samples_per_iteration: 2
+epsilon_diff_acq_value: 0.1    # same as Baseline — activates epsilon_diff termination
+
+lr: 0.25
+lr_schedular: null
+normalize_gradient: false
+standard_deviation_scaling: false
+
+N_max: variable
+optimize_hyperparameters: false
+no_noise_optimization: false
+
+acqf_num_restarts: 5
+acqf_raw_samples: 64
+delta: 0.2
+alpha_max: 0.4
+
+c1: 0.05
+c2: 0.5
+c_W: 0.3
+
+results_dir: experiments/thesis_experiments/results
+verbose: false

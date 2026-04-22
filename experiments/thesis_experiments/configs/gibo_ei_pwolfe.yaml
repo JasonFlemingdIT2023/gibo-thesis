@@ -49,7 +49,7 @@ alpha_max: 0.4                  # upper bound for EI line search
 
 c1: 0.05
 c2: 0.5
-c_W: 0.3                        # p_Wolfe termination threshold
+c_W: 0.45                       # p_Wolfe termination threshold (recalibrated for sigma_floor=0.1)
 sigma_floor: 0.1                # variance floor for p_Wolfe (fraction of sqrt(outputscale))
 tau_snr: 1.0                    # unused 
 
