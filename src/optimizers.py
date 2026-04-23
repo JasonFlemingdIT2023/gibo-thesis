@@ -770,6 +770,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
                     c1=self.c1, c2=self.c2,
+                    sigma_floor=self.sigma_floor,
                 )
 
                 if self.verbose:

@@ -1,0 +1,50 @@
+# ============================================================
+# THESIS EXPERIMENT — Ablation: argmax-mu + delta=0.3 + c_W=0.44
+# ============================================================
+# Hypothesis: switching from EI to argmax mu_post eliminates the
+# Armijo-deadlock (EI picks exploratory alpha where mu < eta).
+# argmax mu_post guarantees mu_post(alpha*) >= mu_post(theta) by
+# definition, so Armijo is almost always satisfied.
+# delta=0.3 keeps GI samples further into search space (better
+# GP calibration for p_Wolfe). c_W=0.44 eliminates the
+# "Both-OK-but-pw<0.45" artifact without raising the bar further.
+
+name: gibo_prob_wolfe_44
+description: "argmax-mu step + p_Wolfe, delta=0.3, c_W=0.44, sigma_floor=0.1"
+
+dimensions: [4, 8, 12, 16, 20, 24, 28, 32, 36]
+n_runs: 40
+seed_start: 0
+max_objective_calls: 300
+
+noise_variance: 0.01
+gp_hypers:
+  outputscale: 1.0
+factor_lengthscale: 2
+
+inner_loop_mode: prob_wolfe
+max_samples_per_iteration: dim_search_space
+min_samples_per_iteration: 2
+epsilon_diff_acq_value: null
+
+lr: 0.25
+lr_schedular: null
+normalize_gradient: false
+standard_deviation_scaling: false
+
+N_max: variable
+optimize_hyperparameters: false
+no_noise_optimization: false
+
+acqf_num_restarts: 5
+acqf_raw_samples: 64
+delta: 0.3                      # GI acquisition box (wider than 0.2 baseline)
+alpha_max: 0.3                  # line search upper bound (unchanged)
+
+c1: 0.05
+c2: 0.5
+c_W: 0.44                       # recalibrated: eliminates Both-OK-but-pw<0.45 artifact
+sigma_floor: 0.1                # variance floor for p_Wolfe
+
+results_dir: experiments/thesis_experiments/results
+verbose: false
