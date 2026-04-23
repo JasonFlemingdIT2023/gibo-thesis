@@ -231,6 +231,4 @@ def check_det_wolfe_combined(
     wolfe_satisfied = armijo_ok and curvature_ok
     return wolfe_satisfied, alpha_candidate, armijo_ok, curvature_ok
 
-# ============================================================
-# THESIS EXTENSION — END
-# ============================================================
+

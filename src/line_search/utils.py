@@ -302,7 +302,7 @@ def compute_s_terms(
         sigma_floor: Minimum posterior std as a fraction of sqrt(outputscale).
             Applied to diagonal S-terms (S11, S22, S33, S44) only --> prevents
             p_Wolfe collapsing to 1 near training data where variance → 0.
-            Default 0.0 (no floor, backward-compatible).
+            
             -->Turned out as failure and design choice to simulate circumstances of Henning Paper
 
     Returns:
@@ -345,9 +345,6 @@ def compute_s_terms(
             S33 = S33.clamp(min=floor_var)
             S22 = S22.clamp(min=floor_grad_var)
             S44 = S44.clamp(min=floor_grad_var)
-        # ============================================================
-        # THESIS EXPERIMENT EXTENSION — END
-        # ============================================================
 
 
         # S13: Cov(f(theta), f(theta+alpha*p))

@@ -75,7 +75,7 @@ def find_alpha_star(
     This is principled because GI sampling is line-aligned: the optimizer
     shifts the GI acquisition bounds to be centred along p (see prob_wolfe
     inner loop in optimizers.py), so the GP posterior is calibrated along
-    the entire search line up to alpha_max = 2*l.
+    the entire search line up to alpha_max = 2*l. (In Theory)
 
     alpha_max = 2*l: SE correlation at distance 2*l is exp(-2) ~ 13.5%,
     so the GP is essentially blind beyond that (Rasmussen & Williams 2006).
@@ -98,7 +98,7 @@ def find_alpha_star(
         Scalar float alpha* in (0, alpha_max].
     """
     # ============================================================
-    # THESIS EXTENSION — BEGIN
+    # THESIS EXTENSION - BEGIN
     # Description: Phase 1 — argmax mu_post on calibrated posterior.
     #   Phase 3 replaces cubic Hermite (which was a workaround for
     #   uninformed GP posterior). Now that GI sampling is line-aligned
@@ -109,7 +109,7 @@ def find_alpha_star(
     #                              dydx=[phi_prime_0, phi_prime_probe])
     # result = minimize_scalar(lambda a: -float(spline(a)),
     #                          bounds=(0, alpha_max), method='bounded')
-    # --- END PREVIOUS THESIS CODE ---
+    #  END PREVIOUS THESIS CODE
 
     # 1. alpha_max: passed explicitly (2*l from optimizer) or computed here
     if delta is None:
@@ -329,6 +329,4 @@ def check_prob_wolfe(
     wolfe_satisfied = p_wolfe_value > c_W
     return wolfe_satisfied, alpha_candidate, p_wolfe_value
 
-# ============================================================
-# THESIS EXTENSION — END
-# ============================================================
+

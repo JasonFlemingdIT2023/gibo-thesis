@@ -537,7 +537,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         standard_deviation_scaling: bool = False,
         verbose: bool = True,
         # ============================================================
-        # THESIS EXTENSION — BEGIN
+        # THESIS EXTENSION - BEGIN
         # Description: Parameters for adaptive inner loop termination
         # ============================================================
         inner_loop_mode: str = 'original',
@@ -547,9 +547,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         alpha_max: Optional[float] = None, # other delta to not interfere GI trust region delta
         min_samples_per_iteration: int = 1,#min samples for iteration as option
         sigma_floor: float = 0.1,          # variance floor fraction (prob_wolfe only)
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
+       
     ) -> None:
         """Inits optimizer Bayesian gradient ascent."""
         super(BayesianGradientAscent, self).__init__(params_init, objective)
@@ -611,7 +609,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         self.max_samples_per_iteration = max_samples_per_iteration
         self.verbose = verbose
         # ============================================================
-        # THESIS EXTENSION — BEGIN
+        # THESIS EXTENSION - BEGIN
         # Description: Store adaptive termination mode and hyperparameters
         # ============================================================
         self.inner_loop_mode = inner_loop_mode
@@ -629,9 +627,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         # Additional keys by mode: p_wolfe (prob_wolfe), wolfe_satisfied +
         # armijo_ok + curvature_ok (det_ei).
         self.last_step_info: dict = {}
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
+
 
     def step(self) -> None:
         # Sample with new params from objective and add this to train data.
@@ -707,10 +703,10 @@ class BayesianGradientAscent(AbstractOptimizer):
                                 )
                             break
                     acq_value_old = acq_value
-            # --- END ORIGINAL GIBO CODE
+            #  END ORIGINAL GIBO CODE
 
         elif self.inner_loop_mode == 'prob_wolfe':
-            # --- Variant A: Probabilistic Wolfe inner loop ---
+            #  Variant A: Probabilistic Wolfe inner loop 
             # Design: p is fixed after the FIRST GI sample, not before.
             # Reason: before any GI samples, the SE kernel derivative at
             # theta (the only training point) is exactly zero, making
@@ -720,56 +716,55 @@ class BayesianGradientAscent(AbstractOptimizer):
             phi_0 = None
             phi_prime_0 = None
             # ============================================================
-            # THESIS EXTENSION — BEGIN
+            # THESIS EXTENSION - BEGIN
             # Description: alpha_max = 2*l (dynamic, from model lengthscale)
             #   when not set explicitly. At 2*l the SE kernel correlation is
             #   exp(-2) ~ 13.5% --> the GP is essentially uninformed beyond that.
             #   Kept separate from delta so GI bounds (±delta) are unaffected.
-            # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
+            #  ORIGINAL GIBO CODE 
             # delta_val = float(self.delta) if self.delta is not None else 0.1
-            # --- END ORIGINAL GIBO CODE ---
+            # END ORIGINAL GIBO CODE
             if self.alpha_max is not None:
                 alpha_max_val = float(self.alpha_max)
             else:
                 alpha_max_val = 2.0 * self.model.covar_module.base_kernel.lengthscale.mean().item()
-            # ============================================================
-            # THESIS EXTENSION — END
-            # ============================================================
+    
             alpha_candidate = alpha_max_val   # fallback: upper bound of search
             _wolfe_satisfied = False
             p_wolfe_val = 0.0             # default if loop never runs
             _n_inner = 0
-            # ============================================================
-            # THESIS EXTENSION — BEGIN
-            # Description: Line-aligned GI sampling.
-            #   center_alpha tracks where along p the GI box is centred.
-            #   None → first sample uses standard ±delta box around theta
-            #   (p is not yet known). From sample 2 onward the box is
-            #   shifted to theta + center_alpha * p so that GI samples
-            #   calibrate the GP exactly where the line search operates.
-            #
-            #   Bounds for the shift:
-            #     center_alpha >= 0.5*l: sample must be far enough from
-            #       theta to inform the line (not redundant with theta).
-            #     center_alpha <= l: sample stays within substantial
-            #       correlation range --> SE kernel at distance l gives
-            #       exp(-0.5) ~ 60%, still strongly informative for
-            #       gradient estimation at theta (Rasmussen & Williams 2006).
-            #
-            #   Box size stays ±delta (only the centre shifts). The GI
-            #   acquisition still maximises gradient information; it just
-            #   does so in the region that matters for the line search.
-            # ============================================================
+            '''
+             THESIS EXTENSION - BEGIN
+             Description: Line-aligned GI sampling.
+              center_alpha tracks where along p the GI box is centred.
+              None → first sample uses standard ±delta box around theta
+               (p is not yet known). From sample 2 onward the box is
+               shifted to theta + center_alpha * p so that GI samples
+               calibrate the GP exactly where the line search operates.
+            
+               Bounds for the shift:
+                 center_alpha >= 0.5*l: sample must be far enough from
+                   theta to inform the line (not redundant with theta).
+                 center_alpha <= l: sample stays within substantial
+                   correlation range --> SE kernel at distance l gives
+                   exp(-0.5) ~ 60%, still strongly informative for
+                   gradient estimation at theta (Rasmussen & Williams 2006).
+            
+               Box size stays ±delta (only the centre shifts). The GI
+              acquisition still maximises gradient information; it just
+              does so in the region that matters for the line search.
+        
+            '''
             _center_alpha = None   # set after first sample when p is known
             _ls_val = self.model.covar_module.base_kernel.lengthscale.mean().item()
             # ============================================================
-            # THESIS EXTENSION — END
+            # THESIS EXTENSION - END
             # ============================================================
 
             for i in range(self.max_samples_per_iteration):
                 # 1. Real function evaluation via GI acquisition function.
                 # ============================================================
-                # THESIS EXTENSION — BEGIN
+                # THESIS EXTENSION - BEGIN
                 # Description: Shift GI bounds along p from sample 2 onward.
                 #   Sample 1: standard bounds around theta (p unknown).
                 #   Sample 2+: bounds centred at theta + _center_alpha * p.
@@ -778,9 +773,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                     _box_center = self.params + _center_alpha * p_direction
                     _delta_t = float(self.delta) if self.delta is not None else 0.2
                     self.bounds = torch.tensor([[-_delta_t], [_delta_t]], dtype=self.params.dtype) + _box_center
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
+            
                 new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
                 new_y = self.objective(new_x)
 
@@ -790,8 +783,6 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.acquisition_fcn.update_K_xX_dx()
                 _n_inner += 1
 
-                # 2. Fix search direction from first GI-informed posterior.
-                # phi_0 and phi_prime_0 are computed once and reused every
                 # inner iteration --> p is frozen for the whole inner loop.
                 if p_direction is None:
                     p_direction, _ = get_search_direction(self.model, self.params)
@@ -821,14 +812,14 @@ class BayesianGradientAscent(AbstractOptimizer):
                 # ============================================================
                 # THESIS EXTENSION — BEGIN
                 # Description: argmax mu_post on [0, alpha_max=2*l].
-                #   With line-aligned GI sampling the posterior along p is now
+                #   With line aligned GI sampling the posterior along p is now
                 #   calibrated, so direct argmax is principled. Cached
                 #   phi_0/phi_prime_0 avoid a redundant GP call at alpha=0.
-                # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
+                # ORIGINAL GIBO CODE 
                 # alpha_candidate = find_alpha_star(
                 #     self.model, self.params, p_direction, delta=alpha_max_val
                 # )
-                # --- END ORIGINAL GIBO CODE ---
+                # - END ORIGINAL GIBO CODE 
                 alpha_candidate = find_alpha_star(
                     self.model, self.params, p_direction,
                     delta=alpha_max_val,
@@ -843,20 +834,14 @@ class BayesianGradientAscent(AbstractOptimizer):
                 #   the line search returns conservative candidates.
                 #   Upper bound alpha_max_val (was l): consistent with the search
                 #   range so the GI box can follow the full step.
-                # --- PREVIOUS THESIS CODE ---
+                # -PREVIOUS THESIS CODE 
                 # _center_alpha = float(max(0.5 * _ls_val, min(alpha_candidate, _ls_val)))
-                # --- END PREVIOUS THESIS CODE ---
+                # END PREVIOUS THESIS CODE 
                 _center_alpha = float(max(0.1 * _ls_val, min(alpha_candidate, alpha_max_val)))
                 # ============================================================
                 # THESIS EXTENSION — END
                 # ============================================================
 
-                # 4. Compute p_Wolfe at alpha_candidate.
-                # ============================================================
-                # THESIS EXTENSION — BEGIN
-                # Description: pass sigma_floor; request
-                #   diagnostics when verbose for richer logging.
-                # ============================================================
                 _diag = compute_p_wolfe(
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
@@ -877,9 +862,6 @@ class BayesianGradientAscent(AbstractOptimizer):
                     )
                 else:
                     p_wolfe_val = _diag
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
 
                 if p_wolfe_val > self.c_W:
                     _wolfe_satisfied = True
@@ -894,8 +876,8 @@ class BayesianGradientAscent(AbstractOptimizer):
 
             if not _wolfe_satisfied and p_direction is not None:
                 # ============================================================
-                # THESIS EXTENSION — BEGIN
-                # Description: Fallback-Path 3 --> max_samples reached without
+                # THESIS EXTENSION - BEGIN
+                # Description: Fallback-Path  --> max_samples reached without
                 #   Wolfe being satisfied. The line search found no trustworthy
                 #   step. Use a conservative baseline-style step (lr * l) instead
                 #   of the last alpha_candidate which may be large and unvalidated.
@@ -917,14 +899,14 @@ class BayesianGradientAscent(AbstractOptimizer):
 
         elif self.inner_loop_mode == 'det_ei':
             #  Variant B: Deterministic Wolfe + EI inner loop
-            # Same lazy-direction design as Variant A: p is fixed after the
+            # Samelazy-direction design as Variant A: p is fixed after the
             # first GI sample to avoid the zero-gradient degeneracy at theta.
             # eta = phi_0 serves as EI reference (current posterior mean at theta).
             p_direction = None
             phi_0 = None
             phi_prime_0 = None
             eta = None
-            # ============================================================
+            # =================================================
             # THESIS EXTENSION — BEGIN
             # Description: alpha_max = 2*l (dynamic) --> mirrors prob_wolfe block.
             # --- ORIGINAL GIBO CODE (replaced by thesis extension) ---
@@ -934,9 +916,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 alpha_max_val = float(self.alpha_max)
             else:
                 alpha_max_val = 2.0 * self.model.covar_module.base_kernel.lengthscale.mean().item()
-            # ============================================================
-            # THESIS EXTENSION — END
-            # ============================================================
+    
             alpha_candidate = alpha_max_val
             _wolfe_satisfied = False
             armijo_ok = False             #default if loop never runs
@@ -944,7 +924,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             gp_informed = False           #default if loop never runs-->variance guard
             _n_inner = 0
             # ============================================================
-            # THESIS EXTENSION — BEGIN
+            # THESIS EXTENSION - BEGIN
             # Description: GI-Shift state (mirrors prob_wolfe block).
             #   _ls_val: mean lengthscale for clipping center_alpha.
             #   _center_alpha: None for sample 1 (p unknown), then tracks
@@ -953,13 +933,12 @@ class BayesianGradientAscent(AbstractOptimizer):
             _ls_val = self.model.covar_module.base_kernel.lengthscale.mean().item()
             _center_alpha = None
             # ============================================================
-            # THESIS EXTENSION — END
+            # THESIS EXTENSION - END
             # ============================================================
 
             for i in range(self.max_samples_per_iteration):
-                # 1. Real function evaluation via GI acquisition function.
                 # ============================================================
-                # THESIS EXTENSION — BEGIN
+                # THESIS EXTENSION - BEGIN
                 # Description: Shift GI bounds along p from sample 2 onward.
                 #   Sample 1: standard bounds around theta (p unknown).
                 #   Sample 2+: bounds centred at theta + _center_alpha * p.
@@ -972,19 +951,15 @@ class BayesianGradientAscent(AbstractOptimizer):
                     self.bounds = torch.tensor(
                         [[-_delta_t], [_delta_t]], dtype=self.params.dtype
                     ) + _box_center
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
+    
                 new_x, acq_value = self.optimize_acqf(self.acquisition_fcn, self.bounds)
                 new_y = self.objective(new_x)
-
-                # Update GP with new observation.
+                
                 self.model.append_train_data(new_x, new_y)
                 self.model.posterior(self.params)
                 self.acquisition_fcn.update_K_xX_dx()
                 _n_inner += 1
 
-                # 2. Fix search direction from first GI-informed posterior.
                 if p_direction is None:
                     p_direction, _ = get_search_direction(self.model, self.params)
                     phi_0, phi_prime_0, _ = eval_phi_0(
@@ -1001,36 +976,30 @@ class BayesianGradientAscent(AbstractOptimizer):
                         alpha_candidate = self.optimizer_torch.param_groups[0]['lr']
                         _wolfe_satisfied = False
                         break
-                    # ============================================================
-                    # THESIS EXTENSION — END
-                    # ============================================================
 
-                # 3. Recompute alpha_candidate via EI maximization.
+              
                 alpha_candidate = find_alpha_star_ei(
                     self.model, self.params, p_direction, eta=eta, delta=alpha_max_val
                 )
                 # ============================================================
-                # THESIS EXTENSION — BEGIN
+                # THESIS EXTENSION - BEGIN
                 # Description: Update center_alpha for next GI bound shift.
                 #   Clipped to [0.1*l, alpha_max] so the box stays in the
                 #   informative region of the SE kernel (mirrors prob_wolfe).
                 # ============================================================
                 _center_alpha = float(max(0.1 * _ls_val, min(alpha_candidate, alpha_max_val)))
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
+              
 
-                # 4. Check strong Wolfe conditions deterministically on mu_post.
                 armijo_ok, curvature_ok = check_det_wolfe(
                     self.model, self.params, alpha_candidate, p_direction,
                     phi_0=phi_0, phi_prime_0=phi_prime_0,
                     c1=self.c1, c2=self.c2,
                 )
                 # ============================================================
-                # THESIS EXTENSION — BEGIN
+                # THESIS EXTENSION - BEGIN
                 # Description: Posterior-variance gate.
                 #   Only accept Wolfe if the GP has resolved >= 50% of its
-                #   prior uncertainty at the step point. This blocks blind
+                #  prior uncertainty at the step point. This blocks blind
                 #   jumps to alpha_max where sigma2 = ca. outputscale (no data).
                 #   Threshold 0.5 * outputscale is scale-relative and
                 #   dimension-independent. Forces the inner loop to collect
@@ -1042,7 +1011,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 outputscale = self.model.covar_module.outputscale.detach().item()
                 gp_informed = sigma2_at_alpha.item() < 0.5 * outputscale
                 # ============================================================
-                # THESIS EXTENSION — END
+                # THESIS EXTENSION - END
                 # ============================================================
 
                 if self.verbose:
@@ -1061,26 +1030,23 @@ class BayesianGradientAscent(AbstractOptimizer):
                             f"  Det Wolfe satisfied after {_n_inner} inner samples."
                         )
                     break
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
 
             if self.verbose and not _wolfe_satisfied:
                 print(
                     f"  Det-EI: max_samples ({self.max_samples_per_iteration}) "
                     f"reached without satisfying Wolfe. Using alpha={alpha_candidate:.4f}."
                 )
-            # --- END Variant B inner loop ---
+        
         # ============================================================
-        # THESIS EXTENSION — END
+        # THESIS EXTENSION - END
         # ============================================================
 
         # ============================================================
-        # THESIS EXTENSION — BEGIN
+        # THESIS EXTENSION - BEGIN
         # Description: Branch gradient step on inner_loop_mode
         # ============================================================
         if self.inner_loop_mode == 'original':
-            # --- ORIGINAL GIBO CODE (unchanged) ---
+            #  ORIGINAL GIBO CODE (unchanged) 
             with torch.no_grad():
                 self.optimizer_torch.zero_grad()
                 mean_d, variance_d = self.model.posterior_derivative(self.params)
@@ -1099,24 +1065,21 @@ class BayesianGradientAscent(AbstractOptimizer):
                     self.params.grad[:] = params_grad  # Define as gradient ascent.
                 self.optimizer_torch.step()
                 self.iteration += 1
-            # --- END ORIGINAL GIBO CODE ---
+            # END ORIGINAL GIBO CODE 
 
         elif self.inner_loop_mode in ('prob_wolfe', 'det_ei'):
-            # --- Variant A & B: Direct parameter update along p_direction ---
+            # Variant A & B: Direct parameter update along p_direction
             # Bypasses SGD entirely: theta_{t+1} = theta_t + alpha* * p
-            # p_direction is None only if max_samples_per_iteration == 0.
+            # Ignores the lengthscae
             with torch.no_grad():
                 self.optimizer_torch.zero_grad()
                 if p_direction is not None:
                     self.params.data += alpha_candidate * p_direction
                 self.iteration += 1 
-            # --- END Variant A & B gradient step ---
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
+            # END Variant A & B gradient step 
 
         # ============================================================
-        # THESIS EXTENSION — BEGIN
+        # THESIS EXTENSION BEGIN
         # Description: Collect per-step metrics into last_step_info
         # ============================================================
         with torch.no_grad():
@@ -1156,7 +1119,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 'sigma2': _sigma2,
             }
         # ============================================================
-        # THESIS EXTENSION — END
+        # THESIS EXTENSION - END
         # ============================================================
 
         if (
