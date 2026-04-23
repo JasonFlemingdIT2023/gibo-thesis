@@ -127,23 +127,22 @@ def compute_p_wolfe(
     Returns:
         p_Wolfe in [0, 1] as float.
     """
-    # --Baseline values at alpha=0 (cached if provided) 
+    # Baseline values at alpha=0 (cached if provided) 
     if phi_0 is None or phi_prime_0 is None:
         phi_0, phi_prime_0, _ = eval_phi_0(model, theta, p)
 
-    # --Values at alpha 
+    # Values at alpha 
     phi_a, phi_prime_a, _ = eval_phi(model, theta, alpha, p)
 
     # All 10 cross-covariance terms (sigma_floor applied inside)
     s = compute_s_terms(model, theta, alpha, p, sigma_floor=sigma_floor)
 
-    # --Means of a_t (Armijo) and b_t (curvature) 
+    #Means of a_t (Armijo) and b_t (curvature) 
     #m_a = phi(alpha) - phi(0) - c1*alpha*phi'(0)
     #m_b = c2*phi'(0) - phi'(alpha)
     m_a = phi_a - phi_0 - c1 * alpha * phi_prime_0
     m_b = c2 * phi_prime_0 - phi_prime_a
 
-    # --Variances and cross-covariance 
     #C_aa = Var(a_t), C_bb = Var(b_t), C_ab = Cov(a_t, b_t)
     C_aa = (
         s['S11'] + s['S33'] - 2 * s['S13']
@@ -162,13 +161,13 @@ def compute_p_wolfe(
         - s['S34']
     )
 
-    # --Numerical stability
+    # Numerical stability
     C_aa = C_aa.clamp(min=1e-10)
     C_bb = C_bb.clamp(min=1e-10)
     sqrt_Caa = C_aa.sqrt()
     sqrt_Cbb = C_bb.sqrt()
 
-    # --Correlation 
+    # Correlation 
     rho = (C_ab / (sqrt_Caa * sqrt_Cbb)).clamp(-1 + 1e-6, 1 - 1e-6)
     rho_val = rho.item()
 
@@ -258,6 +257,3 @@ def check_prob_wolfe(
     wolfe_satisfied = p_wolfe_value > c_W
     return wolfe_satisfied, alpha_candidate, p_wolfe_value
 
-# ============================================================
-# THESIS EXTENSION — END
-# ============================================================

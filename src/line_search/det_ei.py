@@ -33,10 +33,6 @@ Design Reason:
     A direct scalar implementation via scipy.optimize.minimize_scalar is therefore both simpler and more transparent.
 """
 
-# ============================================================
-# THESIS EXTENSION — BEGIN
-# Description: Full implementation of Variant B
-# ============================================================
 
 from typing import Tuple
 
@@ -53,9 +49,6 @@ from src.line_search.utils import (
 #   No circular import: prob_wolfe imports from utils only, not det_ei.
 # ============================================================
 from src.line_search.prob_wolfe import compute_p_wolfe
-# ============================================================
-# THESIS EXTENSION — END
-# ============================================================
 
 
 # ---------------------------------------------------------------------------
@@ -308,9 +301,7 @@ def check_ei_pwolfe(
 
     wolfe_satisfied = p_wolfe_value > c_W
     return wolfe_satisfied, alpha_candidate, p_wolfe_value, armijo_ok, curvature_ok
-    # ============================================================
-    # THESIS EXTENSION — END
-    # ============================================================
+
 
 
 # ---------------------------------------------------------------------------
@@ -349,10 +340,7 @@ def check_ei_snr(
         armijo_ok: Deterministic Armijo on mu_post (logging only).
         curvature_ok: Deterministic curvature on mu_post (logging only).
     """
-    # ============================================================
-    # THESIS EXTENSION — BEGIN
-    # Description: Combined EI step + gradient SNR termination
-    # ============================================================
+   
     alpha_candidate = find_alpha_star_ei(model, theta, p, eta, delta=delta)
 
     snr_value = compute_gradient_snr(model, theta, p, phi_prime_0=phi_prime_0)
@@ -365,8 +353,6 @@ def check_ei_snr(
 
     snr_satisfied = snr_value >= tau_snr
     return snr_satisfied, alpha_candidate, snr_value, armijo_ok, curvature_ok
-    # ============================================================
-    # THESIS EXTENSION — END
-    # ============================================================
+ 
 
 
