@@ -303,8 +303,6 @@ def compute_s_terms(
         sigma_floor: Minimum posterior std as a fraction of sqrt(outputscale).
             Applied to diagonal S-terms (S11, S22, S33, S44) to prevent
             p_Wolfe collapsing to 0 or 1 near training data where variance → 0.
-            Gradient floor is scaled by 1/l^2 (from SE kernel derivative).
-            Default 0.0 (no floor, backward-compatible). Use 0.1 for ei_pwolfe.
             Design choice: simulates Mahsereci & Hennig's Wiener process
             minimum variance, which never reaches zero along the path.
 
@@ -328,7 +326,7 @@ def compute_s_terms(
         var_d_a = var_d_a.squeeze()
         S44 = p_vec @ var_d_a @ p_vec                     # scalar
 
-        # ============================================================
+        '''
         # THESIS EXTENSION — BEGIN
         # Description: Variance floor on diagonal S-terms.
         #   Prevents p_Wolfe trivially collapsing near training data where
@@ -337,7 +335,7 @@ def compute_s_terms(
         #   (matches SE kernel derivative variance at prior).
         #   Design: mimics Mahsereci & Hennig's Wiener process which has
         #   non-zero variance everywhere along the path.
-        # ============================================================
+         '''
         if sigma_floor > 0.0:
             outputscale = float(model.covar_module.outputscale.detach())
             floor_var = (sigma_floor ** 2) * outputscale
@@ -347,9 +345,7 @@ def compute_s_terms(
             S33 = S33.clamp(min=floor_var)
             S22 = S22.clamp(min=floor_grad_var)
             S44 = S44.clamp(min=floor_grad_var)
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
+
 
         # Cross-covariances between function values
         S13 = posterior_cov(model, x0, xa)                 # scalar

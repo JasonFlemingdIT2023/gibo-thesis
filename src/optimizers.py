@@ -547,7 +547,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         c1: float = 0.05,
         c2: float = 0.5,
         c_W: float = 0.3,
-        alpha_max: Optional[float] = None,   # separate from GI delta; see det_ei branch
+        alpha_max: Optional[float] = None,   #separate from GI delta; see det_ei branch
         min_samples_per_iteration: int = 1,
         sigma_floor: float = 0.1,            # ei_pwolfe: variance floor for p_Wolfe
         tau_snr: float = 1.0,                # ei_snr: gradient SNR threshold
@@ -712,7 +712,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             # --- END ORIGINAL GIBO CODE
 
         elif self.inner_loop_mode == 'prob_wolfe':
-            # --- Variant A: Probabilistic Wolfe inner loop ---
+            # ariant A: Probabilistic Wolfe inner loop 
             # Design: p is fixed after the FIRST GI sample, not before.
             # Reason: before any GI samples, the SE kernel derivative at
             # theta (the only training point) is exactly zero, making
@@ -734,9 +734,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                 else float(self.delta) if self.delta is not None
                 else 0.1
             )
-            # ============================================================
-            # THESIS EXTENSION — END
-            # ============================================================
+        
             alpha_candidate = alpha_max_val   # fallback: upper bound of search
             _wolfe_satisfied = False
             p_wolfe_val = 0.0             # default if loop never runs
@@ -794,16 +792,14 @@ class BayesianGradientAscent(AbstractOptimizer):
                             f"  Wolfe satisfied after {_n_inner} inner samples."
                         )
                     break
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
+    
 
             if self.verbose and not _wolfe_satisfied:
                 print(
                     f"  Prob-Wolfe: max_samples ({self.max_samples_per_iteration}) "
                     f"reached without satisfying Wolfe. Using alpha={alpha_candidate:.4f}."
                 )
-            # --END Variant A inner loop
+            # END Variant A inner loop
 
         elif self.inner_loop_mode == 'det_ei':
             # - Variant B: Deterministic Wolfe + EI inner loop
@@ -831,7 +827,7 @@ class BayesianGradientAscent(AbstractOptimizer):
             # ============================================================
             alpha_candidate = alpha_max_val
             _wolfe_satisfied = False
-            armijo_ok = False             # default if loop never runs
+            armijo_ok = False             
             curvature_ok = False
             _n_inner = 0
             acq_value_old = None
@@ -847,13 +843,13 @@ class BayesianGradientAscent(AbstractOptimizer):
                 self.acquisition_fcn.update_K_xX_dx()
                 _n_inner += 1
 
-                # 2. Fix search direction from first GI-informed posterior.
+                # 2.Fix search direction from first GI-informed posterior.
                 if p_direction is None:
                     p_direction, _ = get_search_direction(self.model, self.params)
                     phi_0, phi_prime_0, _ = eval_phi_0(
                         self.model, self.params, p_direction
                     )
-                    eta = phi_0  # EI reference: current posterior mean at theta
+                    eta = phi_0  #EI reference: current posterior mean at theta
 
                 # 3 Recompute alpha_candidate via EI maximization.
                 alpha_candidate = find_alpha_star_ei(
@@ -893,7 +889,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                     if acq_value_old is not None:
                         diff = acq_value - acq_value_old
                         if diff < self.epsilon_diff_acq_value:
-                            _wolfe_satisfied = True  # reuse flag for logging
+                            _wolfe_satisfied = True  #reuse flag for logging
                             if self.verbose:
                                 print(
                                     f"  Det-EI epsilon_diff satisfied after {_n_inner} "
@@ -909,9 +905,6 @@ class BayesianGradientAscent(AbstractOptimizer):
                             f"  Det Wolfe satisfied after {_n_inner} inner samples."
                         )
                     break
-                # ============================================================
-                # THESIS EXTENSION — END
-                # ============================================================
 
             if self.verbose and not _wolfe_satisfied:
                 print(
@@ -986,9 +979,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                     f"  EI-pWolfe: max_samples ({self.max_samples_per_iteration}) "
                     f"reached. p_Wolfe={p_wolfe_val:.4f}, alpha={alpha_candidate:.4f}."
                 )
-            # ============================================================
-            # THESIS EXTENSION - END
-            # ============================================================
+    
 
         elif self.inner_loop_mode == 'ei_snr':
             # ============================================================
@@ -1065,7 +1056,7 @@ class BayesianGradientAscent(AbstractOptimizer):
         # Description: Branch gradient step on inner_loop_mode
         # ============================================================
         if self.inner_loop_mode == 'original':
-            # --- ORIGINAL GIBO CODE (unchanged) ---
+            # ORIGINAL GIBO CODE (unchanged) 
             with torch.no_grad():
                 self.optimizer_torch.zero_grad()
                 mean_d, variance_d = self.model.posterior_derivative(self.params)
@@ -1084,7 +1075,7 @@ class BayesianGradientAscent(AbstractOptimizer):
                     self.params.grad[:] = params_grad  # Define as gradient ascent.
                 self.optimizer_torch.step()
                 self.iteration += 1
-            # --- END ORIGINAL GIBO CODE ---
+            # END ORIGINAL GIBO CODE 
 
         elif self.inner_loop_mode in ('prob_wolfe', 'det_ei', 'ei_pwolfe', 'ei_snr'):
             #Variants A, B, ei_pwolfe, ei_snr: Direct update along p
@@ -1094,9 +1085,6 @@ class BayesianGradientAscent(AbstractOptimizer):
                 if p_direction is not None:
                     self.params.data += alpha_candidate * p_direction
                 self.iteration += 1
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
 
         # ============================================================
         # THESIS EXTENSION — BEGIN

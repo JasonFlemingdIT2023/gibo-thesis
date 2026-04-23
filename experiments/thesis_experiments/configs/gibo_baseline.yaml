@@ -11,45 +11,44 @@
 name: gibo_baseline
 description: "Original GIBO: fixed inner loop M=dim, SGD gradient step (baseline)"
 
-# --- Experiment scope (matches original GIBO paper) ---
+
 dimensions: [4, 8, 12, 16, 20, 24, 28, 32, 36]
 n_runs: 40                # num_objectives from data generation
 seed_start: 0
 max_objective_calls: 300
 
-# --- GP model (set to true values for within-model setting) ---
+
 noise_variance: 0.01
 gp_hypers:
   outputscale: 1.0
-  # lengthscale: loaded per-dimension from data/lengthscales.pt
+
 factor_lengthscale: 2
 
-# --- Inner loop (original: M = dim, matches gibo_default.yaml) ---
+
 inner_loop_mode: original
 max_samples_per_iteration: dim_search_space   # resolved to dim at runtime
 epsilon_diff_acq_value: 0.1                   # matches gibo_default.yaml
 
-# --- Gradient step (SGD, matches gibo_default.yaml) ---
+
 lr: 0.25
 lr_schedular: null
 normalize_gradient: true
 standard_deviation_scaling: false
 
-# --- GP model config ---
-N_max: variable           # resolved to 5 * dim at runtime
+N_max: variable         
 optimize_hyperparameters: false
 no_noise_optimization: false
 
-# --- Acquisition function optimization (matches gibo_default.yaml)
+
 acqf_num_restarts: 5
 acqf_raw_samples: 64
-delta: 0.2                # matches gibo_default.yaml
+delta: 0.2                
 
-# --- Line search params (unused for baseline, kept for structural consistency) ---
+
 c1: 0.05
 c2: 0.5
 c_W: 0.3
 
-# --- Output ---
+
 results_dir: experiments/thesis_experiments/results
 verbose: false

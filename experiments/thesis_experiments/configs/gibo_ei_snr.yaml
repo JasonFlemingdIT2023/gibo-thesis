@@ -2,7 +2,7 @@
 # THESIS EXPERIMENT — Variant ei_snr Config
 # ============================================================
 # GIBO with EI step size + gradient SNR termination.
-#
+
 # Step selection:  alpha* = argmax EI(alpha) over (0, alpha_max]
 #Termination:     stop when SNR = phi'(0)^2 / S22 >= tau_snr
 
@@ -21,7 +21,7 @@ gp_hypers:
 factor_lengthscale: 2
 
 inner_loop_mode: ei_snr
-max_samples_per_iteration: dim_search_space   # safety limit = dim
+max_samples_per_iteration: dim_search_space  
 min_samples_per_iteration: 2
 epsilon_diff_acq_value: null
 
@@ -30,7 +30,7 @@ lr_schedular: null
 normalize_gradient: false
 standard_deviation_scaling: false
 
-N_max: variable                 # 5 * dim
+N_max: variable               
 optimize_hyperparameters: false
 no_noise_optimization: false
 
