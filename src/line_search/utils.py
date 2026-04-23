@@ -455,7 +455,7 @@ def eval_phi_0(
 
 
 # ============================================================
-# THESIS EXTENSION — BEGIN
+# THESIS EXTENSION - BEGIN
 # Description: Gradient SNR utility for ei_snr inner loop termination.
 # ============================================================
 def compute_gradient_snr(
@@ -501,6 +501,4 @@ def compute_gradient_snr(
             signal = float((p * mean_d).sum()) ** 2
 
     return signal / S22
-# ============================================================
-# THESIS EXTENSION — END
-# ============================================================
+
