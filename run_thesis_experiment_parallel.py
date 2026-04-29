@@ -4,27 +4,12 @@ Parallelized experiment runner for thesis experiments.
 Identical logic to run_thesis_experiment.py, but runs all (dim, run) jobs
 in parallel using multiprocessing.Pool.
 
-Key detail: each worker calls torch.set_num_threads(1) to prevent PyTorch's
-internal OpenMP/MKL from spawning its own threads — otherwise n_workers *
-n_cpu_threads compete for the same cores and performance degrades.
-
 Usage:
     python run_thesis_experiment_parallel.py \\
         -c experiments/thesis_experiments/configs/gibo_baseline.yaml \\
         -d experiments/thesis_experiments/data \\
         --n_workers 24
-
-    # Smoke test:
-    python run_thesis_experiment_parallel.py \\
-        -c experiments/thesis_experiments/configs/gibo_baseline.yaml \\
-        -d experiments/thesis_experiments/data \\
-        --smoke --n_workers 4
 """
-
-# ============================================================
-# THESIS EXTENSION — BEGIN
-# Description: Parallel wrapper around run_thesis_experiment logic
-# ============================================================
 
 import os
 import pickle
@@ -39,25 +24,23 @@ from src.optimizers import BayesianGradientAscent
 from src.model import DerivativeExactGPSEModel
 from src.acquisition_function import optimize_acqf_custom_bo
 from src.synthetic_functions import generate_objective_from_gp_post
-
-# Reuse build_optimizer and run_single from the sequential runner unchanged.
 from run_thesis_experiment import build_optimizer, run_single
 
 
 def _worker_init():
     """Called once per worker process at Pool startup.
 
-    Limits PyTorch's internal thread count to 1 so that n_workers processes
+    Important: Limits PyTorchs internal thread count to 1 so that n_workers processes
     each use 1 core, instead of n_workers * n_cpu_threads all competing.
     """
     torch.set_num_threads(1)
 
 
 def _run_job(args):
-    """Top-level function (required for pickle-ability in multiprocessing).
+    """Top level function (required for pickle ability in multiprocessing).
 
-    Unpacks job tuple, skips if output already exists, runs run_single,
-    saves .pkl.
+    Unpacks job tuple, skips if output already exists, run run_single,
+    saves pkl.
     """
     cfg, dim, run_idx, seed, train_x, train_y, lengthscale, f_max, out_path = args
 
@@ -108,8 +91,7 @@ def main():
         cfg = yaml.safe_load(f)
 
     # Load pre-generated data once in the main process.
-    # Workers receive tensors via pickle — acceptable since tensors are small
-    # (1000 points x dim) compared to the per-run compute cost.
+    # Workers receive tensors via pickle --> acceptable since tensors are small
     data_dir = args.data_dir
     train_x_dict      = torch.load(os.path.join(data_dir, "train_x.pt"))
     train_y_dict      = torch.load(os.path.join(data_dir, "train_y.pt"))
@@ -128,7 +110,7 @@ def main():
     results_dir = cfg["results_dir"]
     name        = cfg["name"]
 
-    # Build flat job list — one entry per (dim, run).
+    # Build flat job list -> one entry per (dim, run).
     jobs = []
     for dim in dimensions:
         dim_dir = os.path.join(results_dir, name, f"dim_{dim}")
@@ -172,6 +154,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-# ============================================================
-# THESIS EXTENSION — END
-# ============================================================

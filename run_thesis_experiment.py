@@ -1,19 +1,13 @@
 """
-Unified experiment runner for thesis experiments.
+Experiment runner for thesis experiments.
 
 Runs one variant (baseline, prob_wolfe, or det_ei) across all configured
-dimensions and seeds. Saves per-run .pkl files with all thesis metrics.
+dimensions and seeds. Saves run .pkl files with all thesis metrics.
 
 Usage:
     python run_thesis_experiment.py \\
         -c experiments/thesis_experiments/configs/gibo_baseline.yaml \\
         -d experiments/thesis_experiments/data
-
-    # Smoke test (fast):
-    python run_thesis_experiment.py \\
-        -c experiments/thesis_experiments/configs/gibo_baseline.yaml \\
-        -d experiments/thesis_experiments/data \\
-        --smoke
 
 Output (one file per run):
     <results_dir>/<name>/dim_<D>/run_<NNN>.pkl
@@ -21,14 +15,9 @@ Output (one file per run):
 Each .pkl contains a dict with keys:
     regret_per_eval, f_values, inner_loop_samples, step_sizes,
     p_wolfe_values (Variant A), wolfe_satisfied (Variant B),
-    armijo_ok, curvature_ok (Variant B),
+    armijo_ok, curvature_ok (Variant B) etc.
     gradient_norms, posterior_variance_trace, config, seed, dimension
 """
-
-# ============================================================
-# THESIS EXTENSION — BEGIN
-# Description: Unified experiment runner for all three thesis variants
-# ============================================================
 
 import os
 import pickle
@@ -41,26 +30,16 @@ from src.loop import call_counter
 from src.optimizers import BayesianGradientAscent
 from src.model import DerivativeExactGPSEModel
 from src.acquisition_function import optimize_acqf_custom_bo
-from src.synthetic_functions import (
-    generate_objective_from_gp_post,
-    get_lengthscales,
-    factor_hennig,
-)
+from src.synthetic_functions import (generate_objective_from_gp_post, get_lengthscales, factor_hennig,)
 
-
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
                     objective, lengthscale: torch.Tensor) -> BayesianGradientAscent:
     """Instantiate BayesianGradientAscent from thesis config dict."""
 
-    # ============================================================
-    # THESIS EXTENSION — BEGIN
-    # Description: Resolve YAML placeholder strings to concrete values,
-    #              matching the original GIBO config.evaluate() behaviour.
-    # ============================================================
+    # THESIS 
+    # Description: Resolve YAML placeholder strings to concrete values,,matching the original GIBO config.evaluate() behaviour.
     n_max_raw = cfg["N_max"]
     n_max = 5 * dim if n_max_raw == "variable" else int(n_max_raw)
 
@@ -69,9 +48,6 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
         max_samples = dim
     else:
         max_samples = int(max_samples_raw)
-    # ============================================================
-    # THESIS EXTENSION — END
-    # ============================================================
 
     hypers = {
         "covar_module.base_kernel.lengthscale": lengthscale,
@@ -127,32 +103,17 @@ def build_optimizer(cfg: dict, dim: int, params_init: torch.Tensor,
         c1=cfg["c1"],
         c2=cfg["c2"],
         c_W=cfg["c_W"],
-        # ============================================================
-        # THESIS EXPERIMENT EXTENSION — BEGIN
-        # Description: Pass alpha_max and min_samples_per_iteration from
-        #   YAML config, with safe defaults (None and 1) so that existing
-        #   configs without these keys continue to work unchanged.
-        # ============================================================
+        # safe defaults in case experiment dont use them
         alpha_max=cfg.get("alpha_max", None),
         min_samples_per_iteration=cfg.get("min_samples_per_iteration", 1),
-        # ============================================================
-        # THESIS EXTENSION — BEGIN
-        # Description: sigma_floor (ei_pwolfe) and tau_snr (ei_snr) params.
-        #   Safe defaults: 0.1 and 1.0 match the YAML configs; existing
-        #   configs without these keys are unaffected (modes don't use them).
-        # ============================================================
         sigma_floor=cfg.get("sigma_floor", 0.1),
         tau_snr=cfg.get("tau_snr", 1.0),
-        # ============================================================
-        # THESIS EXPERIMENT EXTENSION — END
-        # ============================================================
     )
 
-
+# Run one optimization trajectory. Returns a result dict.
 def run_single(cfg: dict, dim: int, seed: int,
                train_x: torch.Tensor, train_y: torch.Tensor,
                lengthscale: torch.Tensor, f_max: float) -> dict:
-    """Run one optimization trajectory. Returns a result dict."""
 
     torch.manual_seed(seed)
 
@@ -170,16 +131,16 @@ def run_single(cfg: dict, dim: int, seed: int,
     params_init = 0.5 * torch.ones(dim, dtype=torch.float32)
     optimizer = build_optimizer(cfg, dim, params_init, objective, lengthscale)
 
-    # --- Metric accumulators ---
+    # Metric accumulators
     f_values = []
     inner_loop_samples = []
     step_sizes = []
-    p_wolfe_values = []        # prob_wolfe and ei_pwolfe
-    wolfe_satisfied_trace = [] # prob_wolfe, det_ei, ei_pwolfe
-    armijo_ok_trace = []       # det_ei, ei_pwolfe, ei_snr
-    curvature_ok_trace = []    # det_ei, ei_pwolfe, ei_snr
-    snr_values_trace = []      # ei_snr only
-    snr_satisfied_trace = []   # ei_snr only
+    p_wolfe_values = []       
+    wolfe_satisfied_trace = [] 
+    armijo_ok_trace = []      
+    curvature_ok_trace = []    
+    snr_values_trace = []      
+    snr_satisfied_trace = []   
     gradient_norms = []
     posterior_variance_trace = []
     calls_at_iteration = []
@@ -205,10 +166,6 @@ def run_single(cfg: dict, dim: int, seed: int,
             wolfe_satisfied_trace.append(info.get("wolfe_satisfied", None))
             armijo_ok_trace.append(info.get("armijo_ok", None))
             curvature_ok_trace.append(info.get("curvature_ok", None))
-        # ============================================================
-        # THESIS EXTENSION — BEGIN
-        # Description: Metric logging for ei_pwolfe and ei_snr variants
-        # ============================================================
         elif mode == "ei_pwolfe":
             p_wolfe_values.append(info.get("p_wolfe", None))
             wolfe_satisfied_trace.append(info.get("wolfe_satisfied", None))
@@ -219,9 +176,6 @@ def run_single(cfg: dict, dim: int, seed: int,
             snr_satisfied_trace.append(info.get("snr_satisfied", None))
             armijo_ok_trace.append(info.get("armijo_ok", None))
             curvature_ok_trace.append(info.get("curvature_ok", None))
-        # ============================================================
-        # THESIS EXTENSION — END
-        # ============================================================
 
     # Simple regret at each iteration: f_max - best_so_far
     best_so_far = float("-inf")
@@ -253,20 +207,13 @@ def run_single(cfg: dict, dim: int, seed: int,
     }
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
     parser = argparse.ArgumentParser(
         description="Run thesis experiment for one variant."
     )
-    parser.add_argument("-c", "--config", type=str, required=True,
-                        help="Path to experiment config YAML.")
-    parser.add_argument("-d", "--data_dir", type=str, required=True,
-                        help="Path to pre-generated data directory.")
-    parser.add_argument("--smoke", action="store_true",
-                        help="Smoke test: dim=[4], n_runs=1, max_calls=30.")
+    parser.add_argument("-c", "--config", type=str, required=True, help="Path to experiment config YAML.")
+    parser.add_argument("-d", "--data_dir", type=str, required=True, help="Path to pre-generated data directory.")
+    parser.add_argument("--smoke", action="store_true", help="Smoke test: dim=[4], n_runs=1, max_calls=30.")
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
@@ -308,10 +255,10 @@ def main():
             out_path = os.path.join(dim_dir, f"run_{run_idx:03d}.pkl")
 
             if os.path.exists(out_path):
-                print(f"  run {run_idx:03d} — already exists, skipping.")
+                print(f" run {run_idx:03d} — already exists, skipping.")
                 continue
 
-            print(f"  run {run_idx:03d} (seed={seed}) ...", end=" ", flush=True)
+            print(f" run {run_idx:03d} (seed={seed}) ...", end=" ", flush=True)
             try:
                 result = run_single(
                     cfg=cfg,
@@ -339,6 +286,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# ============================================================
-# THESIS EXTENSION — END
-# ============================================================
+

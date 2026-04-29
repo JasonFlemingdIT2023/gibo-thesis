@@ -1,38 +1,30 @@
 """
 Variant B: Deterministic Wolfe Conditions + EI step size for inner loop termination.
-
 Design:
-    alpha_candidate = argmax_{alpha in (0, delta]} EI(alpha)
-    Stop inner loop when strong Wolfe conditions hold on mu_post(alpha_candidate).
+    alpha_candidate = argmax_{alpha in (0, delta]}EI(alpha)
+    Stop inner loop when strong Wolfe conditions hold on alpha candidate.
 
 The EI acquisition selects the step size that balances expected improvement
 with posterior uncertainty. The Wolfe check is then evaluated deterministically
 on the posterior mean --> no probabilistic threshold.
 
-
 EI for maximization (reference eta = mu_post(theta)):
     z(alpha)  = (mu_post(theta + alpha*p) - eta) / sigma_post(theta + alpha*p)
     EI(alpha) = (mu_post(theta + alpha*p) - eta) * Phi(z) + sigma_post * phi_pdf(z)
 
-Wolfe conditions (deterministic, evaluated on mu_post):
-    Armijo:         phi(alpha) >= phi(0) + c1 * alpha * phi'(0)
+Wolfe conditions:
+    Armijo:           phi(alpha) >= phi(0) + c1 * alpha * phi'(0)
     Strong Curvature: |phi'(alpha)| <= c2 * |phi'(0)|
-
-Reference:
-    Jones et al. (1998), Efficient Global Optimization of Expensive Black-Box
-    Functions. Journal of Global Optimization.
-    Nocedal & Wright (2006), Numerical Optimization, Chapter 3.
     
 Design Reason:
     The standard BoTorch botorch.acquisition.analytic.ExpectedImprovement operates over the full D-dimensional input space
     and is designed to select the next observation point. 
-    In contrast, the line search requires optimizing EI over a single scalar step size alpha 
-    along a fixed search direction p, i.e. EI(alpha) = EI(θ_t + alpha·p). 
+    In contrast, the line search requires optimizing EI over a step size alpha 
+    along a fixed search direction p, EI(alpha) = EI(θ_t + alpha·p). 
     Adapting BoTorch EI to this 1D parametrization would require a non standard coordinate transformation 
-    and would obscure the analytical structure of the line search. 
-    A direct scalar implementation via scipy.optimize.minimize_scalar is therefore both simpler and more transparent.
+    and would obscure the analytical structure of line search. 
+    A direct implementation via scipy.optimize.minimize_scalar is therefore both simpler and more transparent.
 """
-
 
 from typing import Tuple
 
@@ -43,17 +35,9 @@ from scipy.stats import norm as scipy_norm
 from src.line_search.utils import (
     eval_phi, eval_phi_0, get_search_direction, compute_gradient_snr,
 )
-# ============================================================
-# THESIS EXTENSION — BEGIN
+# THESIS ADD ON
 # Description: Import compute_p_wolfe for ei_pwolfe combined check.
-#   No circular import: prob_wolfe imports from utils only, not det_ei.
-# ============================================================
 from src.line_search.prob_wolfe import compute_p_wolfe
-
-
-# ---------------------------------------------------------------------------
-# Step 1: Compute EI at a given alpha
-# ---------------------------------------------------------------------------
 
 def compute_ei(
     model,
@@ -64,9 +48,6 @@ def compute_ei(
 ) -> float:
     """Compute Expected Improvement EI(alpha) for maximization.
 
-    EI measures how much better than eta = mu_post(theta) we expect at
-    theta + alpha*p, accounting for posterior uncertainty sigma_post.
-
     EI(alpha) = (mu - eta) * Phi(z) + sigma * phi_pdf(z)
     where z = (mu - eta) / sigma, mu = mu_post(theta + alpha*p),
     sigma = sqrt(sigma2_post(theta + alpha*p)).
@@ -74,7 +55,6 @@ def compute_ei(
     When sigma -> 0 (GP very confident), EI -> max(mu - eta, 0).
     When mu >> eta, the Phi(z) term dominates (pure exploitation).
     When sigma is large, the phi_pdf(z) term adds exploration.
-
     Args:
         model: DerivativeExactGPSEModel.
         theta: Current parameters, shape [1, D].
@@ -93,17 +73,13 @@ def compute_ei(
     eta_val = eta.item()
 
     if sigma_val < 1e-10:
-        #GP fully confident: EI = max(mu - eta, 0)
+        #GP fully confident:EI = max(mu - eta, 0)
         return float(max(mu_val - eta_val, 0.0))
 
     z = (mu_val - eta_val) / sigma_val
     ei = (mu_val - eta_val) * scipy_norm.cdf(z) + sigma_val * scipy_norm.pdf(z)
     return float(max(ei, 0.0))
 
-
-# ---------------------------------------------------------------------------
-# Step 2: Find alpha* = argmax EI(alpha) over (0, delta]
-# ---------------------------------------------------------------------------
 
 def find_alpha_star_ei(
     model,
@@ -115,9 +91,6 @@ def find_alpha_star_ei(
     """Find alpha* = argmax_{alpha in (0, delta]} EI(alpha).
 
     Uses scipy.optimize.minimize_scalar (Brent method, bounded) on -EI(alpha).
-    EI is typically smooth and unimodal for the SE kernel, making this
-    1D optimization reliable.
-
     All evaluations are analytical GP posterior calls --> no real function
     evaluations.
 
@@ -125,8 +98,8 @@ def find_alpha_star_ei(
         model: DerivativeExactGPSEModel with current training data.
         theta: Current parameters, shape [1, D].
         p: Normalized search direction, shape [1, D].
-        eta: Reference value for EI (typically mu_post(theta)).
-        delta: Upper bound for alpha search (local neighbourhood radius).
+        eta: Reference value for EI 
+        delta: Upper bound for alpha search -->alphamax
 
     Returns:
         Scalar float alpha*.
@@ -143,10 +116,6 @@ def find_alpha_star_ei(
     return float(result.x)
 
 
-# ---------------------------------------------------------------------------
-# Step 3: Deterministic strong Wolfe check on mu_post
-# ---------------------------------------------------------------------------
-
 def check_det_wolfe(
     model,
     theta: torch.Tensor,
@@ -157,17 +126,11 @@ def check_det_wolfe(
     c1: float = 0.05,
     c2: float = 0.5,
 ) -> Tuple[bool, bool]:
-    """Check strong Wolfe conditions deterministically on mu_post.
+    """Check strong Wolfe conditions deterministically
 
     Both conditions are evaluated on the posterior mean -->no probability,
     no thresholding. This is the classical line search termination criterion
     applied to the GP surrogate.
-
-    Armijo (sufficient increase):
-        phi(alpha) >= phi(0) + c1 * alpha * phi'(0)
-
-    Strong Curvature:
-        |phi'(alpha)| <= c2 * |phi'(0)|
 
     Note: phi'(0) = p^T mean_d(theta) > 0 by construction (p is the
     normalized gradient direction). The absolute value in the curvature
@@ -198,9 +161,6 @@ def check_det_wolfe(
     return armijo_ok, curvature_ok
 
 
-# ---------------------------------------------------------------------------
-# Step 4: Combined check for use in the inner loop
-# ---------------------------------------------------------------------------
 
 def check_det_wolfe_combined(
     model,
@@ -245,10 +205,6 @@ def check_det_wolfe_combined(
     return wolfe_satisfied, alpha_candidate, armijo_ok, curvature_ok
 
 
-# ---------------------------------------------------------------------------
-# Step 5: EI step size + Probabilistic Wolfe termination (ei_pwolfe)
-# ---------------------------------------------------------------------------
-
 def check_ei_pwolfe(
     model,
     theta: torch.Tensor,
@@ -266,25 +222,16 @@ def check_ei_pwolfe(
 
     Combines the EI step selector from det_ei with the uncertainty aware
     stopping criterion from prob_wolfe. The sigma_floor prevents p_Wolfe
-    trivially collapsing to 0 near training data (simulates Mahsereci &
-    Hennig's Wiener process which has non-zero variance everywhere).
-
-    Step selection:   alpha* = argmax_{alpha in (0, delta]} EI(alpha)
-    Termination:      stop when p_Wolfe(alpha*) > c_W
-
-    armijo_ok and curvature_ok are logged but NOT used for termination.
+    trivially collapsing to 0 near training data.
+    armijo_ok and curvature_ok are logs
 
     Returns:
-        wolfe_satisfied: True if p_Wolfe(alpha*) > c_W.
-        alpha_candidate: EI-optimal step size.
-        p_wolfe_value: Computed p_Wolfe probability.
-        armijo_ok: Deterministic Armijo on mu_post (logging only).
-        curvature_ok: Deterministic curvature on mu_post (logging only).
+        wolfe_satisfied: True if p_Wolfe(alpha*) > c_W
+        alpha_candidate: EI-optimal step size
+        p_wolfe_value: Computed p_Wolfe probability
+        armijo_ok: Deterministic Armijo on mu_post
+        curvature_ok: Deterministic curvature on mu_post 
     """
-    # ============================================================
-    # THESIS EXTENSION — BEGIN
-    # Description: Combined EI step + probabilistic Wolfe termination
-    # ============================================================
     alpha_candidate = find_alpha_star_ei(model, theta, p, eta, delta=delta)
 
     p_wolfe_value = compute_p_wolfe(
@@ -302,11 +249,6 @@ def check_ei_pwolfe(
     wolfe_satisfied = p_wolfe_value > c_W
     return wolfe_satisfied, alpha_candidate, p_wolfe_value, armijo_ok, curvature_ok
 
-
-
-# ---------------------------------------------------------------------------
-# Step 6: EI step size + Gradient SNR termination (ei_snr)
-# ---------------------------------------------------------------------------
 
 def check_ei_snr(
     model,
@@ -327,29 +269,28 @@ def check_ei_snr(
         SNR = (p^T mean_d(theta))^2 / (p^T variance_d(theta) p)
 
     Termination: stop when SNR >= tau_snr
-        SNR >= tau : signal dominates noise --> direction reliable → stop
-        SNR <  tau : noise-dominated --> more GI samples needed
+        SNR >= tau: signal dominates noise --> direction reliable → stop
+        SNR <  tau: noise-dominated --> more GI samples needed
 
-    armijo_ok and curvature_ok are logged but NOT used for termination.
+    armijo_ok and curvature_ok are logged.
     tau_snr=1.0: signal equals one noise std --> moderate confidence threshold.
 
     Returns:
         snr_satisfied: True if gradient_snr(theta) >= tau_snr.
         alpha_candidate: EI-optimal step size.
-        snr_value: Computed gradient SNR (float, possibly inf).
-        armijo_ok: Deterministic Armijo on mu_post (logging only).
-        curvature_ok: Deterministic curvature on mu_post (logging only).
+        snr_value: Computed gradient SNR (float, possibly inf)
+        armijo_ok: Deterministic Armijo on mu_post 
+        curvature_ok: Deterministic curvature on mu_post
     """
-   
     alpha_candidate = find_alpha_star_ei(model, theta, p, eta, delta=delta)
 
     snr_value = compute_gradient_snr(model, theta, p, phi_prime_0=phi_prime_0)
 
     armijo_ok, curvature_ok = check_det_wolfe(
-        model, theta, alpha_candidate, p,
-        phi_0=phi_0, phi_prime_0=phi_prime_0,
-        c1=c1, c2=c2,
-    )
+                              model, theta, alpha_candidate, p,
+                              phi_0=phi_0, phi_prime_0=phi_prime_0,
+                              c1=c1, c2=c2,
+                            )
 
     snr_satisfied = snr_value >= tau_snr
     return snr_satisfied, alpha_candidate, snr_value, armijo_ok, curvature_ok
